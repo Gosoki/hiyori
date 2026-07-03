@@ -129,7 +129,7 @@ hiyori/
 本项目采用 **GNU General Public License v3.0**，全文见 [LICENSE](LICENSE)。
 
 ```
-Copyright (C) 2026 <你的名字 / handle>
+Copyright (C) 2026 <gosoki>
 
 日和 Hiyori is free software: you can redistribute it and/or modify it under
 the terms of the GNU General Public License v3.0 as published by the Free
