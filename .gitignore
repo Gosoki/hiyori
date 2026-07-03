@@ -1,0 +1,26 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# --- Logs / temp ---
+*.log
+*.tmp
+
+# NOTE: frontend/japan.geo.json IS committed on purpose — it's a small (~590KB)
+# runtime asset. Regenerating it needs network + tools/build_map.py, so we keep it.

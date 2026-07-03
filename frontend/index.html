@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>日和 Hiyori</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="dashboard">
+    <!-- Header -->
+    <header id="topbar">
+      <div class="brand"><span id="city">—</span></div>
+      <div class="clock">
+        <div id="time">--:--</div>
+        <div id="date">—</div>
+      </div>
+      <div class="topbar-actions">
+        <button id="quake-toggle" title="Earthquake" aria-label="earthquake">🗾</button>
+        <button id="settings-btn" title="Settings" aria-label="settings">⚙</button>
+      </div>
+    </header>
+
+    <!-- Weather -->
+    <section id="weather" class="panel">
+      <h2 class="panel-title" data-i18n="weather">天気予報</h2>
+      <div class="weather-body">
+        <div id="today" class="today"><div class="loading" data-i18n="noData">データ取得中…</div></div>
+        <div id="weekly" class="weekly"></div>
+      </div>
+    </section>
+
+    <!-- News -->
+    <section id="news">
+      <div class="news-col">
+        <h2 class="panel-title" data-i18n="newsAI">AI・テクノロジー</h2>
+        <ul id="news-ai" class="news-list"></ul>
+      </div>
+      <div class="news-col">
+        <h2 class="panel-title" data-i18n="newsJapan">日本のニュース</h2>
+        <ul id="news-japan" class="news-list"></ul>
+      </div>
+    </section>
+  </div>
+
+  <!-- Earthquake overlay: fullscreen map + floating info panel (top-left) -->
+  <div id="quake-overlay" class="hidden">
+    <div id="quake-map" class="quake-map"></div>
+
+    <div class="quake-panel">
+      <div id="quake-banner" class="quake-banner">
+        <span id="quake-title">地震情報</span>
+        <span id="quake-sub" class="quake-sub"></span>
+      </div>
+      <div class="quake-panel-body">
+        <div class="quake-intensity">
+          <div id="quake-badge" class="intensity-badge">—</div>
+          <div class="intensity-caption" data-i18n="maxIntensity">最大震度</div>
+        </div>
+        <div class="quake-info">
+          <div class="qi-row"><span class="qi-key" data-i18n="epicenter">震源地</span><span id="q-epicenter" class="qi-val">—</span></div>
+          <div class="qi-row"><span class="qi-key" data-i18n="magnitude">マグニチュード</span><span id="q-mag" class="qi-val">—</span></div>
+          <div class="qi-row"><span class="qi-key" data-i18n="depth">深さ</span><span id="q-depth" class="qi-val">—</span></div>
+          <div class="qi-row"><span class="qi-key" data-i18n="origin">発生時刻</span><span id="q-origin" class="qi-val">—</span></div>
+          <div class="qi-row" id="q-tsunami-row"><span class="qi-key" data-i18n="tsunami">津波</span><span id="q-tsunami" class="qi-val">—</span></div>
+        </div>
+        <div id="quake-regions" class="quake-regions"></div>
+        <div id="quake-remaining" class="quake-remaining"></div>
+      </div>
+    </div>
+
+    <div id="quake-recent" class="quake-recent hidden"></div>
+    <button id="quake-close" class="quake-close" aria-label="close">✕</button>
+  </div>
+
+  <!-- Settings overlay -->
+  <div id="settings-overlay" class="hidden">
+    <div class="settings-card">
+      <h3 data-i18n="settings">設定</h3>
+      <label data-i18n="language">言語</label>
+      <div id="lang-options" class="lang-options"></div>
+      <button id="settings-close" data-i18n="close">閉じる</button>
+    </div>
+  </div>
+
+  <script src="i18n.js"></script>
+  <script src="map.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

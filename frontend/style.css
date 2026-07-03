@@ -1,0 +1,391 @@
+:root {
+  --bg: #0d1117;
+  --bg-panel: #161b22;
+  --bg-card: #1c2330;
+  --border: #2a3240;
+  --text: #e6edf3;
+  --text-dim: #8b98a9;
+  --accent: #4aa8ff;
+  --temp-hi: #ff7b6b;
+  --temp-lo: #6bb6ff;
+  --pop: #4aa8ff;
+
+  /* JMA 震度 (shindo) intensity palette — escalating severity */
+  --i1: #6c757d; --i2: #2b8a3e; --i3: #f0a020; --i4: #f76707;
+  --i5w: #e8590c; --i5s: #d9480f; --i6w: #c92a2a; --i6s: #a61e4d; --i7: #862e9c;
+
+  /* Fluid type/space — scale with the smaller viewport dim (vmin), clamped.
+     This keeps sizes sane in ANY resolution or orientation. */
+  --fs-xs: clamp(11px, 1.5vmin, 20px);
+  --fs-sm: clamp(13px, 1.9vmin, 24px);
+  --fs-md: clamp(15px, 2.3vmin, 30px);
+  --fs-lg: clamp(19px, 3vmin, 42px);
+  --fs-xl: clamp(26px, 4.6vmin, 68px);
+  --fs-xxl: clamp(40px, 9vmin, 130px);
+  --gap: clamp(6px, 1.3vmin, 22px);
+  --radius: clamp(8px, 1.4vmin, 16px);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo",
+    "Noto Sans CJK JP", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ============================ Layout shell ============================ */
+#dashboard {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: var(--gap);
+  padding: var(--gap);
+}
+
+/* ---- Header ---- */
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 0 clamp(2px, 0.5vmin, 8px);
+}
+.brand { font-size: var(--fs-lg); font-weight: 700; }
+.clock { text-align: center; line-height: 1.05; }
+#time { font-size: var(--fs-xl); font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+#date { font-size: var(--fs-sm); color: var(--text-dim); }
+.topbar-actions { display: flex; align-items: center; gap: var(--gap); }
+#settings-btn, #quake-toggle {
+  background: none; border: none; color: var(--text-dim);
+  font-size: var(--fs-lg); cursor: pointer; line-height: 1; padding: 0.4vmin;
+}
+#settings-btn:hover, #quake-toggle:hover { color: var(--text); }
+#quake-toggle.active { color: var(--accent); }
+
+/* ---- Panels ---- */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap) clamp(10px, 1.6vmin, 26px);
+  overflow: hidden;
+  min-height: 0;
+}
+.panel-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: var(--gap);
+  letter-spacing: 0.5px;
+}
+
+/* ============================ Weather ============================ */
+.weather-body { display: flex; gap: var(--gap); height: calc(100% - var(--fs-sm) - var(--gap)); }
+.today {
+  flex: 0 0 clamp(150px, 26%, 340px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(2px, 0.6vmin, 8px);
+  padding-right: var(--gap);
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.today .t-icon { font-size: clamp(48px, 11vmin, 150px); line-height: 1; }
+.today .t-text { font-size: var(--fs-md); font-weight: 600; }
+.today .t-temps { font-size: var(--fs-lg); font-weight: 700; }
+.today .t-temps .hi { color: var(--temp-hi); }
+.today .t-temps .lo { color: var(--temp-lo); }
+.today .t-pop { font-size: var(--fs-sm); color: var(--pop); }
+
+.weekly {
+  flex: 1;
+  display: flex;
+  gap: clamp(3px, 0.8vmin, 12px);
+  min-width: 0;
+}
+.day {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: var(--gap) clamp(2px, 0.5vmin, 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(2px, 0.6vmin, 8px);
+  text-align: center;
+}
+.day .d-wd { font-size: var(--fs-sm); font-weight: 600; }
+.day .d-md { font-size: var(--fs-xs); color: var(--text-dim); }
+.day .d-icon { font-size: clamp(22px, 4.6vmin, 60px); line-height: 1; }
+.day .d-temps { font-size: var(--fs-sm); font-weight: 600; }
+.day .d-temps .hi { color: var(--temp-hi); }
+.day .d-temps .lo { color: var(--text-dim); }
+.day .d-pop { font-size: var(--fs-xs); color: var(--pop); }
+.day.is-sat .d-wd { color: var(--temp-lo); }
+.day.is-sun .d-wd { color: var(--temp-hi); }
+
+/* ============================ News ============================ */
+#news { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); min-height: 0; min-width: 0; }
+.news-col {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap) clamp(10px, 1.6vmin, 26px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.news-list { list-style: none; overflow: hidden; flex: 1; min-height: 0; }
+.news-list li {
+  display: flex;
+  gap: clamp(5px, 0.9vmin, 14px);
+  align-items: baseline;
+  padding: clamp(4px, 0.95vmin, 14px) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+}
+.news-list li:last-child { border-bottom: none; }
+.news-list .n-dot { color: var(--accent); flex: 0 0 auto; }
+.news-list .n-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.news-list .n-src {
+  flex: 0 1 auto; max-width: 38%;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: var(--fs-xs); color: var(--text-dim);
+}
+.loading { color: var(--text-dim); font-size: var(--fs-sm); }
+
+/* ============================ Earthquake overlay ============================ */
+/* Map fills the whole screen; info floats top-left. Japan sits along the
+   bottom-left→top-right diagonal, so the top-left corner is empty sea. */
+#quake-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: #0a0e14;
+  overflow: hidden;
+  animation: quake-in 0.35s ease-out;
+}
+.hidden { display: none !important; }
+@keyframes quake-in { from { opacity: 0; } to { opacity: 1; } }
+
+.quake-map { position: absolute; inset: 0; }
+.japan-svg { width: 100%; height: 100%; }
+.japan-main { position: absolute; inset: 0; }
+.okinawa-inset {
+  position: absolute;
+  left: clamp(8px, 1.6vmin, 22px);
+  top: clamp(8px, 1.6vmin, 22px);
+  width: clamp(320px, 40%, 620px);
+  height: clamp(210px, 30vmin, 430px);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.6);
+  background: rgba(13, 17, 23, 0.55);
+  overflow: hidden;
+}
+.okinawa-label {
+  position: absolute; top: clamp(2px, 0.6vmin, 6px); left: clamp(5px, 0.9vmin, 9px);
+  font-size: var(--fs-xs); color: var(--text-dim);
+}
+
+.quake-panel {
+  position: absolute;
+  bottom: clamp(10px, 2vmin, 28px);
+  right: clamp(10px, 2vmin, 28px);
+  width: clamp(280px, 34%, 560px);
+  max-height: 82%;
+  display: flex; flex-direction: column;
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.quake-banner {
+  padding: clamp(8px, 1.4vmin, 18px) clamp(12px, 1.8vmin, 24px);
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  letter-spacing: 1px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: clamp(4px, 0.8vmin, 12px);
+  color: #fff;
+  background: var(--i3);
+  flex: 0 0 auto;
+}
+.quake-banner .quake-sub { font-size: var(--fs-sm); font-weight: 600; opacity: 0.92; }
+#quake-overlay.is-eew .quake-banner { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.4); } }
+
+.quake-close {
+  position: absolute;
+  top: clamp(10px, 2vmin, 28px);
+  right: clamp(10px, 2vmin, 28px);
+  width: clamp(40px, 5.5vmin, 66px);
+  height: clamp(40px, 5.5vmin, 66px);
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: var(--fs-md);
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+.quake-close:hover { background: rgba(40, 48, 60, 0.92); }
+
+.quake-panel-body {
+  padding: clamp(10px, 1.6vmin, 22px) clamp(12px, 1.8vmin, 24px);
+  display: flex; flex-direction: column; gap: clamp(8px, 1.4vmin, 18px);
+  overflow: auto; min-height: 0;
+}
+.quake-intensity { display: flex; align-items: center; gap: clamp(8px, 1.4vmin, 20px); }
+.intensity-badge {
+  width: clamp(64px, 11vmin, 130px); height: clamp(64px, 11vmin, 130px);
+  border-radius: var(--radius);
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(30px, 6vmin, 74px); font-weight: 900; color: #fff;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.45);
+  background: var(--i1);
+  flex: 0 0 auto;
+}
+.intensity-caption { font-size: var(--fs-sm); color: var(--text-dim); }
+
+.quake-info { display: flex; flex-direction: column; gap: clamp(3px, 0.8vmin, 10px); }
+.qi-row { display: flex; align-items: baseline; gap: clamp(6px, 1vmin, 14px); font-size: var(--fs-md); }
+.qi-key { flex: 0 0 34%; color: var(--text-dim); font-size: var(--fs-sm); }
+.qi-val { font-weight: 700; }
+
+.quake-regions { display: flex; flex-direction: column; }
+.quake-note { color: var(--text-dim); font-size: var(--fs-md); }
+.shindo-group {
+  display: flex; align-items: center;
+  gap: clamp(6px, 1.2vmin, 14px);
+  padding: clamp(3px, 0.6vmin, 8px) 0;
+  border-bottom: 1px solid var(--border);
+}
+.shindo-group:last-child { border-bottom: none; }
+.shindo-names { font-size: var(--fs-sm); line-height: 1.3; }
+.r-badge {
+  min-width: clamp(24px, 3.4vmin, 44px); padding: 0 clamp(3px, 0.5vmin, 7px);
+  height: clamp(24px, 3.4vmin, 44px);
+  border-radius: calc(var(--radius) * 0.45);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 800; color: #fff; font-size: var(--fs-xs);
+  flex: 0 0 auto;
+}
+.quake-remaining { color: var(--text-dim); font-size: var(--fs-xs); }
+
+/* recent-quakes browse list (manual 🗾 mode) — left column, below the inset */
+.quake-recent {
+  position: absolute;
+  left: clamp(8px, 1.6vmin, 22px);
+  top: calc(clamp(8px, 1.6vmin, 22px) + clamp(210px, 30vmin, 430px) + clamp(8px, 1.4vmin, 16px));
+  bottom: clamp(10px, 2vmin, 28px);
+  width: clamp(240px, 32%, 440px);
+  display: flex; flex-direction: column; gap: clamp(4px, 0.7vmin, 8px);
+  overflow: auto;
+}
+.rq-title { font-size: var(--fs-xs); color: var(--text-dim); padding: 0 2px clamp(2px, 0.5vmin, 6px); }
+.rq-item {
+  display: flex; align-items: center; gap: clamp(6px, 1vmin, 12px);
+  padding: clamp(5px, 0.9vmin, 11px) clamp(7px, 1vmin, 13px);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.6);
+  background: rgba(13, 17, 23, 0.78);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+.rq-item.active { border-color: var(--accent); background: rgba(74, 168, 255, 0.16); }
+.rq-text { min-width: 0; }
+.rq-place { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rq-time { font-size: var(--fs-xs); color: var(--text-dim); }
+
+/* intensity color classes (badges / chips) */
+.i1 { background: var(--i1); } .i2 { background: var(--i2); }
+.i3 { background: var(--i3); color: #1a1a1a !important; text-shadow: none !important; }
+.i4 { background: var(--i4); } .i5w { background: var(--i5w); }
+.i5s { background: var(--i5s); } .i6w { background: var(--i6w); }
+.i6s { background: var(--i6s); } .i7 { background: var(--i7); }
+
+/* Japan map (SVG) — prefecture fills by intensity + epicenter marker */
+.japan-svg .pref { fill: #232c3d; stroke: #0b0f16; stroke-width: 0.03; }
+.japan-svg .pref.i1 { fill: var(--i1); } .japan-svg .pref.i2 { fill: var(--i2); }
+.japan-svg .pref.i3 { fill: var(--i3); } .japan-svg .pref.i4 { fill: var(--i4); }
+.japan-svg .pref.i5w { fill: var(--i5w); } .japan-svg .pref.i5s { fill: var(--i5s); }
+.japan-svg .pref.i6w { fill: var(--i6w); } .japan-svg .pref.i6s { fill: var(--i6s); }
+.japan-svg .pref.i7 { fill: var(--i7); }
+.epi-ring { fill: none; stroke: #ff4d4d; transform-box: fill-box; transform-origin: center; animation: epi-pulse 1.5s ease-out infinite; }
+.epi-x { stroke: #ff4d4d; stroke-linecap: round; }
+@keyframes epi-pulse { 0% { transform: scale(0.4); opacity: 1; } 100% { transform: scale(2.4); opacity: 0; } }
+
+/* ============================ Settings ============================ */
+#settings-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(8, 10, 16, 0.9);
+  display: flex; align-items: center; justify-content: center;
+}
+.settings-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: clamp(16px, 3vmin, 40px);
+  min-width: min(80vw, 340px);
+}
+.settings-card h3 { font-size: var(--fs-lg); margin-bottom: var(--gap); }
+.settings-card label { display: block; color: var(--text-dim); font-size: var(--fs-sm); margin-bottom: var(--gap); }
+.lang-options { display: flex; flex-direction: column; gap: var(--gap); margin-bottom: calc(var(--gap) * 1.6); }
+.lang-options button {
+  padding: clamp(8px, 1.4vmin, 18px) clamp(12px, 2vmin, 26px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  text-align: left;
+}
+.lang-options button.active { border-color: var(--accent); color: var(--accent); }
+#settings-close {
+  width: 100%;
+  padding: clamp(8px, 1.4vmin, 18px);
+  background: var(--accent);
+  border: none; border-radius: var(--radius);
+  color: #06121f; font-size: var(--fs-md); font-weight: 700; cursor: pointer;
+}
+
+/* ============================ Portrait: restack ============================ */
+@media (orientation: portrait) {
+  #dashboard { grid-template-rows: auto minmax(0, 1fr) minmax(0, 1.6fr); }
+
+  /* weather: today on top (full width), weekly strip below */
+  .weather-body { flex-direction: column; }
+  .today {
+    flex: 0 0 auto;
+    padding-right: 0;
+    padding-bottom: var(--gap);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .weekly { margin-top: var(--gap); }
+
+  /* earthquake: wider info panel on the narrow (portrait) screen */
+  .quake-panel { width: clamp(260px, 56%, 700px); }
+}
+
+/* Narrow screens: single news column so headlines stay readable */
+@media (max-width: 640px) {
+  #news { grid-template-columns: 1fr; }
+}
