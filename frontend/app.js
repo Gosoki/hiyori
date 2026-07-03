@@ -5,6 +5,11 @@ let lang = localStorage.getItem("lang") || null;
 let locale = "ja-JP";
 let lastWeather = null;
 let lastNews = null;
+let lastHourly = null;
+let cityId = localStorage.getItem("city") || null;
+let cities = [];
+let aiSrc = localStorage.getItem("aiSrc") || null;
+let aiSources = [];
 
 function t(key) {
   return (window.I18N[lang] && window.I18N[lang][key]) || window.I18N.ja[key] || key;
@@ -18,6 +23,7 @@ function applyI18n() {
   });
   // re-render cached data so labels/locale update immediately
   if (lastWeather) renderWeather(lastWeather);
+  if (lastHourly) renderHourly(lastHourly);
   if (lastNews) renderNews(lastNews);
 }
 
@@ -38,18 +44,58 @@ function buildLangOptions() {
   });
 }
 
+function buildCityOptions() {
+  const wrap = document.getElementById("city-options");
+  wrap.innerHTML = "";
+  cities.forEach((c) => {
+    const b = document.createElement("button");
+    b.textContent = c.name;
+    if (c.id === cityId) b.classList.add("active");
+    b.onclick = () => {
+      if (c.id === cityId) return;
+      cityId = c.id;
+      localStorage.setItem("city", c.id);
+      buildCityOptions();
+      loadWeather();      // switch immediately
+      loadHourly();
+    };
+    wrap.appendChild(b);
+  });
+}
+
+function buildAiOptions() {
+  const wrap = document.getElementById("aisrc-options");
+  wrap.innerHTML = "";
+  aiSources.forEach((s) => {
+    const b = document.createElement("button");
+    b.textContent = s.name;
+    if (s.id === aiSrc) b.classList.add("active");
+    b.onclick = () => {
+      if (s.id === aiSrc) return;
+      aiSrc = s.id;
+      localStorage.setItem("aiSrc", s.id);
+      buildAiOptions();
+      loadNews();       // switch immediately
+    };
+    wrap.appendChild(b);
+  });
+}
+
 // ---- clock -----------------------------------------------------------------
+function formatDate() {
+  return new Intl.DateTimeFormat(locale, {
+    month: "long", day: "numeric", weekday: "short",
+  }).format(new Date());
+}
+
 function startClock() {
   const timeEl = document.getElementById("time");
-  const dateEl = document.getElementById("date");
   const tick = () => {
-    const now = new Date();
     timeEl.textContent = new Intl.DateTimeFormat(locale, {
       hour: "2-digit", minute: "2-digit", hour12: false,
-    }).format(now);
-    dateEl.textContent = new Intl.DateTimeFormat(locale, {
-      month: "long", day: "numeric", weekday: "short",
-    }).format(now);
+    }).format(new Date());
+    const dateEl = document.getElementById("today-date");   // date lives in the today card now
+    if (dateEl) dateEl.textContent = formatDate();
   };
   tick();
   setInterval(tick, 5000);
@@ -58,7 +104,7 @@ function startClock() {
 // ---- weather ---------------------------------------------------------------
 async function loadWeather() {
   try {
-    const data = await (await fetch("/api/weather")).json();
+    const data = await (await fetch("/api/weather?city=" + encodeURIComponent(cityId || ""))).json();
     if (data && data.today) { lastWeather = data; renderWeather(data); }
   } catch (_) { /* keep last */ }
 }
@@ -68,13 +114,27 @@ function renderWeather(data) {
   const temp = (v) => (v === null || v === undefined ? "--" : v + "°");
 
   const today = data.today || {};
+  // JMA drops today's high/low later in the day — fall back to the met.no hourly.
+  let tMax = today.tempMax, tMin = today.tempMin;
+  if ((tMax == null || tMin == null) && Array.isArray(lastHourly) && lastHourly.length) {
+    const hs = lastHourly.map((h) => h.temp).filter((v) => v !== null && v !== undefined);
+    if (hs.length) {
+      if (tMax == null) tMax = Math.max(...hs);
+      if (tMin == null) tMin = Math.min(...hs);
+    }
+  }
   document.getElementById("today").innerHTML =
-    `<div class="t-icon">${today.icon || "❓"}</div>` +
-    `<div class="t-text">${escapeHtml(today.text || "")}</div>` +
-    `<div class="t-temps"><span class="hi">${temp(today.tempMax)}</span> / ` +
-    `<span class="lo">${temp(today.tempMin)}</span></div>` +
-    (today.pop !== null && today.pop !== undefined
-      ? `<div class="t-pop">${t("pop")} ${today.pop}%</div>` : "");
+    `<div class="t-date" id="today-date">${formatDate()}</div>` +
+    `<div class="today-main">` +
+      `<div class="t-icon">${today.icon || "❓"}</div>` +
+      `<div class="t-info">` +
+        `<div class="t-text" lang="ja">${escapeHtml(today.text || "")}</div>` +
+        `<div class="t-temps"><span class="hi">${temp(tMax)}</span> / ` +
+        `<span class="lo">${temp(tMin)}</span></div>` +
+        (today.pop !== null && today.pop !== undefined
+          ? `<div class="t-pop">${t("pop")} ${today.pop}%</div>` : "") +
+      `</div>` +
+    `</div>`;
 
   const weekly = document.getElementById("weekly");
   weekly.innerHTML = "";
@@ -93,6 +153,39 @@ function renderWeather(data) {
   });
 }
 
+// today's hourly forecast (met.no)
+async function loadHourly() {
+  try {
+    const list = await (await fetch("/api/weather/hourly?city=" + encodeURIComponent(cityId || ""))).json();
+    if (Array.isArray(list)) {
+      lastHourly = list;
+      renderHourly(list);
+      // if the today card is missing its high/low, re-render now that hourly is in
+      const td = lastWeather && lastWeather.today;
+      if (td && (td.tempMax === null || td.tempMax === undefined || td.tempMin === null || td.tempMin === undefined)) {
+        renderWeather(lastWeather);
+      }
+    }
+  } catch (_) { /* keep last */ }
+}
+
+function renderHourly(list) {
+  const el = document.getElementById("hourly");
+  el.innerHTML = "";
+  (list || []).forEach((h, i) => {
+    const item = document.createElement("div");
+    item.className = "hour-item" + (i === 0 ? " now" : "");
+    const label = i === 0 ? t("now") : (h.hour + t("hourUnit"));
+    const temp = (h.temp === null || h.temp === undefined) ? "--" : h.temp + "°";
+    item.innerHTML =
+      `<div class="hour-time">${label}</div>` +
+      `<div class="hour-icon">${h.icon || "❓"}</div>` +
+      `<div class="hour-temp">${temp}</div>` +
+      `<div class="hour-precip">${h.precip > 0 ? h.precip + "mm" : "&nbsp;"}</div>`;
+    el.appendChild(item);
+  });
+}
+
 function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
   if (!dateStr) return { wd: fallbackWd || "", md: fallbackMd || "", dow: -1 };
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -107,22 +200,25 @@ function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
 // ---- news ------------------------------------------------------------------
 async function loadNews() {
   try {
-    const data = await (await fetch("/api/news")).json();
+    const data = await (await fetch("/api/news?ai=" + encodeURIComponent(aiSrc || ""))).json();
     if (data) { lastNews = data; renderNews(data); }
   } catch (_) { /* keep last */ }
 }
 
 function renderNews(data) {
-  fillNewsList("news-ai", data.ai || []);
-  fillNewsList("news-japan", data.japan || []);
+  const aiLang = (aiSources.find((s) => s.id === aiSrc) || {}).lang || "zh";
+  fillNewsList("news-ai", data.ai || [], aiLang);
+  fillNewsList("news-japan", data.japan || [], "ja");   // 主要ニュース is always Japanese
 }
 
-function fillNewsList(id, items) {
+function fillNewsList(id, items, contentLang) {
   const ul = document.getElementById(id);
+  ul.lang = contentLang || "";       // pick the font by the content's language
   ul.innerHTML = "";
   items.forEach((it) => {
     const li = document.createElement("li");
-    const dot = document.createElement("span"); dot.className = "n-dot"; dot.textContent = "•";
+    if (it.alert) { li.className = "n-alert"; li.lang = "ja"; }   // NERV alerts are Japanese
+    const dot = document.createElement("span"); dot.className = "n-dot"; dot.textContent = it.alert ? "⚠️" : "•";
     const title = document.createElement("span"); title.className = "n-title"; title.textContent = it.title;
     li.appendChild(dot); li.appendChild(title);
     if (it.source) {
@@ -395,8 +491,12 @@ function connectWS() {
 }
 
 // ---- settings --------------------------------------------------------------
-document.getElementById("settings-btn").onclick = () =>
+const openSettings = () =>
   document.getElementById("settings-overlay").classList.remove("hidden");
+document.getElementById("city").onclick = openSettings;
+document.getElementById("city").onkeydown = (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSettings(); }
+};
 document.getElementById("settings-close").onclick = () =>
   document.getElementById("settings-overlay").classList.add("hidden");
 document.getElementById("quake-toggle").onclick = toggleQuakeLayout;
@@ -410,16 +510,22 @@ function escapeHtml(s) {
 
 // ---- init ------------------------------------------------------------------
 async function init() {
-  if (!lang) {
-    try { lang = (await (await fetch("/api/config")).json()).language || "ja"; }
-    catch (_) { lang = "ja"; }
-  }
+  let cfg = {};
+  try { cfg = await (await fetch("/api/config")).json(); } catch (_) { /* defaults below */ }
+  if (!lang) lang = cfg.language || "ja";
   if (!window.I18N[lang]) lang = "ja";
+  if (!cityId) cityId = cfg.city || "tokyo";
+  if (!aiSrc) aiSrc = cfg.aiSource || "cn";
+  try { cities = await (await fetch("/api/cities")).json(); } catch (_) { cities = []; }
+  try { aiSources = await (await fetch("/api/ai-sources")).json(); } catch (_) { aiSources = []; }
 
   applyI18n();
   buildLangOptions();
+  buildCityOptions();
+  buildAiOptions();
   startClock();
   loadWeather();
+  loadHourly();
   loadNews();
   if (window.QuakeMap) window.QuakeMap.init("quake-map");   // preload map in background
   loadRecentQuakes();
@@ -427,6 +533,7 @@ async function init() {
   connectWS();
 
   setInterval(loadWeather, 10 * 60 * 1000);
+  setInterval(loadHourly, 15 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
   setInterval(pollQuake, 30 * 1000);
   setInterval(loadRecentQuakes, 3 * 60 * 1000);

@@ -1,6 +1,8 @@
 """FastAPI backend: aggregates weather + news, pushes earthquake alerts, serves the frontend."""
 import asyncio
+import functools
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -8,12 +10,15 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from earthquake import EarthquakeService, fetch_recent_quakes
-from news import fetch_news
-from weather import fetch_weather
+from news import fetch_alerts, fetch_news
+from weather import fetch_hourly, fetch_weather
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 
-state = {"weather": None, "news": None}
+state = {"japan": None}   # 主要ニュース column (shared across devices)
+weather_cache = {}   # city id -> {"data": ..., "ts": ...}
+hourly_cache = {}
+ai_cache = {}        # ai source id -> {"data": [...], "ts": ...}
 clients = set()   # connected frontend WebSockets
 
 
@@ -35,22 +40,81 @@ eq_service = EarthquakeService(
     recent_cap=config.EARTHQUAKE_RECENT_COUNT,
 )
 
+# fetchers bound to their configured counts (per-city)
+weather_fetch = functools.partial(fetch_weather, weekly_count=config.WEEKLY_COUNT)
+hourly_fetch = functools.partial(fetch_hourly, count=config.HOURLY_COUNT, step=config.HOURLY_STEP)
 
-async def weather_loop():
+
+def _city(cid):
+    for c in config.CITIES:
+        if c["id"] == cid:
+            return c
+    return config.CITIES[0]
+
+
+async def _ensure(cache, fetch_fn, cid, ttl, empty):
+    """Return cached city data, (re)fetching if missing/stale; keep last on error."""
+    ent = cache.get(cid)
+    if ent and time.time() - ent["ts"] <= ttl:
+        return ent["data"]
+    try:
+        data = await fetch_fn(_city(cid))
+        cache[cid] = {"data": data, "ts": time.time()}
+        return data
+    except Exception:
+        return ent["data"] if ent else empty
+
+
+async def warm_loop():
+    # Keep the default city warm so first paint is instant. Other cities are
+    # fetched on request and kept fresh by the frontend's own refresh timer.
     while True:
-        try:
-            state["weather"] = await fetch_weather(config.WEATHER)
-        except Exception:
-            pass
-        await asyncio.sleep(config.WEATHER_REFRESH)
+        await _ensure(weather_cache, weather_fetch, config.DEFAULT_CITY, config.WEATHER_REFRESH, {})
+        await _ensure(hourly_cache, hourly_fetch, config.DEFAULT_CITY, config.HOURLY_REFRESH, [])
+        await asyncio.sleep(min(config.WEATHER_REFRESH, config.HOURLY_REFRESH))
+
+
+def _ai_source(sid):
+    for s in config.AI_SOURCES:
+        if s["id"] == sid:
+            return s
+    return config.AI_SOURCES[0]
+
+
+async def _fetch_ai(sid):
+    src = _ai_source(sid)
+    res = await fetch_news({"ai": {"mode": src["mode"], "urls": src["urls"]}}, config.NEWS_MAX_PER_CATEGORY)
+    return res.get("ai", [])
+
+
+async def _ensure_ai(sid):
+    """Return the cached AI headlines for a source group, (re)fetching if stale;
+    keep last-good on empty/error so a flaky feed never blanks the column."""
+    ent = ai_cache.get(sid)
+    if ent and time.time() - ent["ts"] <= config.NEWS_REFRESH:
+        return ent["data"]
+    try:
+        data = await _fetch_ai(sid)
+        if data:
+            ai_cache[sid] = {"data": data, "ts": time.time()}
+            return data
+    except Exception:
+        pass
+    return ent["data"] if ent else []
 
 
 async def news_loop():
     while True:
         try:
-            state["news"] = await fetch_news(config.NEWS_FEEDS, config.NEWS_MAX_PER_CATEGORY)
+            fresh = await fetch_news({"japan": config.NEWS_JAPAN}, config.NEWS_MAX_PER_CATEGORY)
+            alerts = await fetch_alerts(config.ALERT_FEED, config.ALERT_KEYWORDS, config.ALERT_MAX)
+            base = [it for it in fresh.get("japan", []) if not it.get("alert")]
+            japan = (alerts + base)[:config.NEWS_MAX_PER_CATEGORY]
+            if japan:                      # keep last-good if the feed blipped
+                state["japan"] = japan
         except Exception:
             pass
+        await _ensure_ai(config.DEFAULT_AI_SOURCE)   # keep the default source warm
         await asyncio.sleep(config.NEWS_REFRESH)
 
 
@@ -70,7 +134,7 @@ async def recent_quake_loop():
 @asynccontextmanager
 async def lifespan(app):
     tasks = [
-        asyncio.create_task(weather_loop()),
+        asyncio.create_task(warm_loop()),
         asyncio.create_task(news_loop()),
         asyncio.create_task(recent_quake_loop()),
         asyncio.create_task(eq_service.run()),
@@ -85,17 +149,34 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/api/config")
 async def api_config():
-    return {"language": config.DEFAULT_LANGUAGE, "city": config.WEATHER["city_name"]}
+    return {"language": config.DEFAULT_LANGUAGE, "city": config.DEFAULT_CITY,
+            "aiSource": config.DEFAULT_AI_SOURCE}
+
+
+@app.get("/api/cities")
+async def api_cities():
+    return [{"id": c["id"], "name": c["city_name"]} for c in config.CITIES]
+
+
+@app.get("/api/ai-sources")
+async def api_ai_sources():
+    return [{"id": s["id"], "name": s["name"], "lang": s.get("lang", "ja")} for s in config.AI_SOURCES]
 
 
 @app.get("/api/weather")
-async def api_weather():
-    return state["weather"] or {}
+async def api_weather(city: str = None):
+    return await _ensure(weather_cache, weather_fetch, city or config.DEFAULT_CITY, config.WEATHER_REFRESH, {})
+
+
+@app.get("/api/weather/hourly")
+async def api_weather_hourly(city: str = None):
+    return await _ensure(hourly_cache, hourly_fetch, city or config.DEFAULT_CITY, config.HOURLY_REFRESH, [])
 
 
 @app.get("/api/news")
-async def api_news():
-    return state["news"] or {}
+async def api_news(ai: str = None):
+    return {"ai": await _ensure_ai(ai or config.DEFAULT_AI_SOURCE),
+            "japan": state["japan"] or []}
 
 
 @app.get("/api/earthquake/current")

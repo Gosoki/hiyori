@@ -4,35 +4,67 @@ Everything you might reasonably want to tweak lives here.
 Restart the backend after editing.
 """
 
-# --- Weather (気象庁 / JMA, free JSON API, no key required) -----------------
-# Area codes: https://www.jma.go.jp/bosai/common/const/area.json
-WEATHER = {
-    "city_name": "東京",
-    "area_code": "130000",     # 都道府県コード (東京都) — forecast endpoint
-    "class10_code": "130010",  # 地方コード (東京地方) — weather text / precip
-}
+# --- Weather cities (気象庁 JMA area codes + lat/lon for the hourly forecast) -
+# JMA weather uses area_code (forecast endpoint) + class10_code (sub-region);
+# codes from https://www.jma.go.jp/bosai/common/const/area.json . lat/lon feed
+# the met.no hourly forecast. Each device picks a city in ⚙ Settings.
+# Add a city by appending a row (id must be unique).
+CITIES = [
+    {"id": "tokyo",     "city_name": "東京",   "area_code": "130000", "class10_code": "130010", "lat": 35.69, "lon": 139.69},
+    {"id": "osaka",     "city_name": "大阪",   "area_code": "270000", "class10_code": "270000", "lat": 34.69, "lon": 135.50},
+    {"id": "nagoya",    "city_name": "名古屋", "area_code": "230000", "class10_code": "230010", "lat": 35.18, "lon": 136.91},
+    {"id": "yokohama",  "city_name": "横浜",   "area_code": "140000", "class10_code": "140010", "lat": 35.44, "lon": 139.64},
+    {"id": "kyoto",     "city_name": "京都",   "area_code": "260000", "class10_code": "260010", "lat": 35.01, "lon": 135.77},
+    {"id": "kobe",      "city_name": "神戸",   "area_code": "280000", "class10_code": "280010", "lat": 34.69, "lon": 135.20},
+    {"id": "sapporo",   "city_name": "札幌",   "area_code": "016000", "class10_code": "016010", "lat": 43.06, "lon": 141.35},
+    {"id": "sendai",    "city_name": "仙台",   "area_code": "040000", "class10_code": "040010", "lat": 38.27, "lon": 140.87},
+    {"id": "hiroshima", "city_name": "広島",   "area_code": "340000", "class10_code": "340010", "lat": 34.39, "lon": 132.46},
+    {"id": "fukuoka",   "city_name": "福岡",   "area_code": "400000", "class10_code": "400010", "lat": 33.59, "lon": 130.40},
+    {"id": "kanazawa",  "city_name": "金沢",   "area_code": "170000", "class10_code": "170010", "lat": 36.56, "lon": 136.66},
+    {"id": "naha",      "city_name": "那覇",   "area_code": "471000", "class10_code": "471010", "lat": 26.21, "lon": 127.68},
+]
+DEFAULT_CITY = "tokyo"   # id from CITIES; each device can override in Settings
 
-# --- News feeds (headlines only, grouped by category) -----------------------
-# Add / remove RSS or Atom feed URLs freely. Broken feeds are skipped silently.
-NEWS_FEEDS = {
-    "ai": [
-        "https://hnrss.org/newest?q=AI+OR+LLM+OR+OpenAI+OR+Anthropic&count=25",
-        "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
-    ],
-    "japan": [
-        "https://www.nhk.or.jp/rss/news/cat0.xml",              # NHK 主要ニュース
-        "https://news.yahoo.co.jp/rss/topics/top-picks.xml",    # Yahoo!ニュース 主要
-    ],
-    # 中国のニュースは将来用に確保。使うときはコメントを外す:
-    # "china": [
-    #     "https://www.chinanews.com.cn/rss/scroll-news.xml",
-    # ],
-}
-NEWS_MAX_PER_CATEGORY = 15
+# --- News feeds (headlines only) --------------------------------------------
+# A feed group is {"mode", "urls"}. Broken feeds are skipped silently.
+#   "ranked" – keep the feed's own order. Google News Top ranks stories by how many
+#              outlets cover them, so genuinely big events float to the top → 大事件流.
+#   "recent" – merge all feeds, dedupe, sort newest-first (good for a topic stream).
+
+# 主要ニュース column (fixed): Google News Top, importance-ranked.
+NEWS_JAPAN = {"mode": "ranked", "urls": [
+    "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja",
+]}
+
+# AI/テック column: each device picks one source group in Settings (⚙→AI ソース).
+# Add a group by appending a row (unique id + display name + feeds).
+AI_SOURCES = [
+    {"id": "cn", "name": "中文", "lang": "zh", "mode": "recent", "urls": [
+        "https://www.qbitai.com/feed",           # 量子位 (AI)
+        "https://www.solidot.org/index.rss",     # Solidot 奇客 (极客/AI)
+    ]},
+    {"id": "jp", "name": "日本語", "lang": "ja", "mode": "recent", "urls": [
+        "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",   # ITmedia AI+
+    ]},
+    {"id": "global", "name": "Global", "lang": "en", "mode": "recent", "urls": [
+        "https://hnrss.org/newest?q=AI+OR+LLM+OR+OpenAI+OR+Anthropic&count=25",   # Hacker News
+    ]},
+]
+DEFAULT_AI_SOURCE = "cn"   # id from AI_SOURCES; each device can override in Settings
+
+NEWS_MAX_PER_CATEGORY = 12
+
+# --- Severe real-time alerts (特務機関NERV / @UN_NERV; aggregates JMA + Jアラート) -
+# NERV also posts every prefecture's routine advisory, so we keep only titles that
+# signal a genuinely severe event. Usually empty — it lights up only when it matters,
+# and those items are pinned to the top of the main-news column, highlighted.
+ALERT_FEED = "https://unnerv.jp/@UN_NERV.rss"
+ALERT_KEYWORDS = ["特別警報", "津波", "緊急地震速報", "噴火", "Ｊアラート", "Jアラート", "記録的短時間大雨"]
+ALERT_MAX = 3
 
 # --- Earthquake (P2P地震情報 v2 WebSocket, free, no key) ---------------------
 P2P_WS_URL = "wss://api.p2pquake.net/v2/ws"
-EARTHQUAKE_HOLD_SECONDS = 300   # keep the earthquake screen for 5 minutes
+EARTHQUAKE_HOLD_SECONDS = 90    # keep the earthquake screen for 90 seconds
 EARTHQUAKE_SHOW_TEST = False    # show EEW drill (訓練) messages as full-screen?
 EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets you browse
 
@@ -43,6 +75,14 @@ DEFAULT_LANGUAGE = "ja"   # ja / zh / en. Each device can override in Settings.
 # When True, /api/demo/quake and /api/demo/eew inject a sample event so you can
 # preview the earthquake screen. Turn off in production if you like.
 ENABLE_DEMO = True
+
+# --- Hourly forecast (met.no / yr.no, free, no key; needs a User-Agent) -----
+HOURLY_REFRESH = 1800   # hourly forecast refreshed every 30 min
+HOURLY_COUNT = 12       # how many points the strip shows (rolling, from the current hour)
+HOURLY_STEP = 2         # hours between points (2 → 12 points cover a full day)
+
+# --- Weekly forecast --------------------------------------------------------
+WEEKLY_COUNT = 6    # days shown in the weekly strip (fixed; JMA gives 6–7 → capped)
 
 # --- Refresh intervals (seconds) --------------------------------------------
 WEATHER_REFRESH = 600

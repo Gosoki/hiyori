@@ -68,13 +68,15 @@ def _match_area(areas, code):
     return areas[0]
 
 
-async def fetch_weather(cfg):
+async def fetch_weather(cfg, weekly_count=6):
     url = FORECAST_URL.format(area=cfg["area_code"])
     async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "hiyori/1.0"}) as client:
         r = await client.get(url)
         r.raise_for_status()
         data = r.json()
-    return _parse(data, cfg)
+    result = _parse(data, cfg)
+    result["weekly"] = result["weekly"][:weekly_count]   # fixed length (JMA gives 6–7)
+    return result
 
 
 def _parse(data, cfg):
@@ -85,7 +87,9 @@ def _parse(data, cfg):
     warea = _match_area(ts[0]["areas"], cfg["class10_code"])
     code0 = (warea.get("weatherCodes") or [""])[0]
     icon0, short0 = _icon(code0)
-    text0 = (warea.get("weathers") or [""])[0].replace("　", " ").strip() or short0
+    # JMA separates the text with full-width spaces at odd points (e.g. around
+    # "まで"), which reads awkwardly. Japanese has no spaces — drop them entirely.
+    text0 = (warea.get("weathers") or [""])[0].replace("　", "").replace(" ", "").strip() or short0
     tmax, tmin = _today_temps(ts, today)
 
     result = {
@@ -98,7 +102,57 @@ def _parse(data, cfg):
         },
         "weekly": _weekly(data[1], today) if len(data) > 1 else [],
     }
+    # JMA's weekly series often lacks tomorrow's temps — fill from the short-term forecast.
+    st = _shortterm_temps(ts)
+    stp = _shortterm_pops(ts)
+    for d in result["weekly"]:
+        if d["date"] in st:
+            mx, mn = st[d["date"]]
+            if d["tempMax"] is None:
+                d["tempMax"] = mx
+            if d["tempMin"] is None:
+                d["tempMin"] = mn
+        if d["pop"] is None and d["date"] in stp:
+            d["pop"] = stp[d["date"]]
     return result
+
+
+def _shortterm_pops(ts):
+    """date -> max precip probability from the short-term 6-hourly series."""
+    out = {}
+    try:
+        block = ts[1]
+        by_date = {}
+        for d, p in zip(block.get("timeDefines", []), block["areas"][0].get("pops", [])):
+            if p in ("", None):
+                continue
+            try:
+                by_date.setdefault(d[:10], []).append(int(p))
+            except ValueError:
+                pass
+        out = {date: max(v) for date, v in by_date.items()}
+    except (KeyError, IndexError):
+        pass
+    return out
+
+
+def _shortterm_temps(ts):
+    """date -> (max, min) from the short-term temp series (today + next ~2 days)."""
+    out = {}
+    try:
+        block = ts[2]
+        by_date = {}
+        for d, t in zip(block.get("timeDefines", []), block["areas"][0].get("temps", [])):
+            if t in ("", None):
+                continue
+            try:
+                by_date.setdefault(d[:10], []).append(int(float(t)))
+            except ValueError:
+                pass
+        out = {date: (max(v), min(v)) for date, v in by_date.items()}
+    except (KeyError, IndexError):
+        pass
+    return out
 
 
 def _first_pop(block):
@@ -151,4 +205,60 @@ def _weekly(week, today):
             "code": code, "icon": icon, "text": short,
             "pop": _num(pops, i), "tempMin": _num(tmin, i), "tempMax": _num(tmax, i),
         })
+    return out
+
+
+# ---- Hourly forecast (met.no / yr.no) --------------------------------------
+# JMA gives no hourly data, so today's hourly strip comes from met.no (free, no
+# key). met.no requires a descriptive User-Agent and returns times in UTC.
+MET_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+MET_UA = "hiyori/1.0 (github.com/hiyori-dashboard)"
+
+
+def _met_icon(sym, hour):
+    """met.no symbol_code -> (emoji, short JP label), keyword-based for robustness."""
+    s = sym.replace("_day", "").replace("_night", "").replace("_polartwilight", "")
+    night = "_night" in sym or hour < 5 or hour >= 19
+    if "thunder" in s: return ("⛈️", "雷雨")
+    if "snow" in s: return ("❄️", "雪")
+    if "sleet" in s: return ("🌨️", "みぞれ")
+    if "rain" in s and "showers" in s: return ("🌦️", "にわか雨")
+    if "rain" in s: return ("🌧️", "雨")
+    if s == "fog": return ("🌫️", "霧")
+    if s == "cloudy": return ("☁️", "曇")
+    if s == "partlycloudy": return ("🌙" if night else "⛅", "曇時々晴")
+    if s == "fair": return ("🌙" if night else "🌤️", "晴")
+    if s == "clearsky": return ("🌙" if night else "☀️", "快晴")
+    return ("❓", "—")
+
+
+async def fetch_hourly(cfg, count=12, step=1):
+    """`count` forecast points from the current hour, every `step` hours (rolling;
+    may cross midnight). e.g. count=12, step=2 → a full day at 2-hour intervals."""
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": MET_UA}) as client:
+        r = await client.get(MET_URL, params={"lat": cfg["lat"], "lon": cfg["lon"]})
+        r.raise_for_status()
+        data = r.json()
+    cur = datetime.datetime.now(JST).replace(minute=0, second=0, microsecond=0)
+    out = []
+    for e in data["properties"]["timeseries"]:
+        t = datetime.datetime.fromisoformat(e["time"].replace("Z", "+00:00")).astimezone(JST)
+        if t < cur:
+            continue                           # skip past hours
+        delta = round((t - cur).total_seconds() / 3600)
+        if delta % step != 0:
+            continue                           # keep only every `step`-th hour
+        detail = e["data"]["instant"]["details"]
+        nxt = e["data"].get("next_1_hours") or e["data"].get("next_6_hours") or {}
+        sym = nxt.get("summary", {}).get("symbol_code", "")
+        icon, text = _met_icon(sym, t.hour)
+        temp = detail.get("air_temperature")
+        out.append({
+            "hour": t.hour,
+            "temp": round(temp) if temp is not None else None,
+            "icon": icon, "text": text,
+            "precip": nxt.get("details", {}).get("precipitation_amount", 0) or 0,
+        })
+        if len(out) >= count:
+            break
     return out

@@ -10,23 +10,23 @@
   <div id="dashboard">
     <!-- Header -->
     <header id="topbar">
-      <div class="brand"><span id="city">—</span></div>
+      <div class="brand"><span id="city" title="Settings" role="button" tabindex="0">—</span></div>
       <div class="clock">
         <div id="time">--:--</div>
-        <div id="date">—</div>
       </div>
       <div class="topbar-actions">
         <button id="quake-toggle" title="Earthquake" aria-label="earthquake">🗾</button>
-        <button id="settings-btn" title="Settings" aria-label="settings">⚙</button>
       </div>
     </header>
 
     <!-- Weather -->
     <section id="weather" class="panel">
-      <h2 class="panel-title" data-i18n="weather">天気予報</h2>
       <div class="weather-body">
         <div id="today" class="today"><div class="loading" data-i18n="noData">データ取得中…</div></div>
-        <div id="weekly" class="weekly"></div>
+        <div class="weather-right">
+          <div id="weekly" class="weekly"></div>
+          <div id="hourly" class="weather-hourly"></div>
+        </div>
       </div>
     </section>
 
@@ -77,6 +77,10 @@
   <div id="settings-overlay" class="hidden">
     <div class="settings-card">
       <h3 data-i18n="settings">設定</h3>
+      <label data-i18n="cityLabel">都市</label>
+      <div id="city-options" class="lang-options city-options"></div>
+      <label data-i18n="aiSourceLabel">AI ソース</label>
+      <div id="aisrc-options" class="lang-options city-options"></div>
       <label data-i18n="language">言語</label>
       <div id="lang-options" class="lang-options"></div>
       <button id="settings-close" data-i18n="close">閉じる</button>
