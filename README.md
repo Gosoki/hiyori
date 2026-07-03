@@ -121,3 +121,22 @@ hiyori/
 ```
 
 > 地图数据来自 [dataofjapan/land](https://github.com/dataofjapan/land)（MIT），已简化为 2 位小数精度（~1km，仪表盘尺度下无差别）。想改精度重新生成：`python3 tools/build_map.py`。
+
+---
+
+## License
+
+本项目采用 **GNU General Public License v3.0**，全文见 [LICENSE](LICENSE)。
+
+```
+Copyright (C) 2026 <你的名字 / handle>
+
+日和 Hiyori is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License v3.0 as published by the Free
+Software Foundation. It is distributed WITHOUT ANY WARRANTY. See the LICENSE
+file for details.
+```
+
+第三方素材/数据(各自版权方所有,非本项目 GPL 覆盖):
+- 地图边界:[dataofjapan/land](https://github.com/dataofjapan/land)(MIT)
+- 数据源:気象庁 (JMA) / P2P地震情報 / NHK・Yahoo!・Hacker News・ITmedia (RSS)
