@@ -34,6 +34,9 @@ window.I18N = {
     language: "言語",
     cityLabel: "都市",
     aiSourceLabel: "AI ソース",
+    displayLabel: "表示",
+    fullscreen: "全画面表示",
+    exitFullscreen: "全画面解除",
     close: "閉じる",
     noData: "データ取得中…",
     tsunamiMap: {
@@ -78,6 +81,9 @@ window.I18N = {
     language: "语言",
     cityLabel: "城市",
     aiSourceLabel: "AI 源",
+    displayLabel: "显示",
+    fullscreen: "进入全屏",
+    exitFullscreen: "退出全屏",
     close: "关闭",
     noData: "数据获取中…",
     tsunamiMap: {
@@ -122,6 +128,9 @@ window.I18N = {
     language: "Language",
     cityLabel: "City",
     aiSourceLabel: "AI Source",
+    displayLabel: "Display",
+    fullscreen: "Enter Fullscreen",
+    exitFullscreen: "Exit Fullscreen",
     close: "Close",
     noData: "Loading…",
     tsunamiMap: {

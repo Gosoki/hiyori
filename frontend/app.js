@@ -25,6 +25,7 @@ function applyI18n() {
   if (lastWeather) renderWeather(lastWeather);
   if (lastHourly) renderHourly(lastHourly);
   if (lastNews) renderNews(lastNews);
+  updateFullscreenBtn();
 }
 
 function buildLangOptions() {
@@ -494,6 +495,26 @@ function connectWS() {
 // ---- settings --------------------------------------------------------------
 const openSettings = () =>
   document.getElementById("settings-overlay").classList.remove("hidden");
+
+// ---- fullscreen ------------------------------------------------------------
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+function updateFullscreenBtn() {
+  const btn = document.getElementById("fullscreen-btn");
+  if (btn) btn.textContent = t(isFullscreen() ? "exitFullscreen" : "fullscreen");
+}
+function toggleFullscreen() {
+  if (isFullscreen()) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else {
+    const el = document.documentElement;
+    (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+  }
+}
+document.getElementById("fullscreen-btn").onclick = toggleFullscreen;
+document.addEventListener("fullscreenchange", updateFullscreenBtn);
+document.addEventListener("webkitfullscreenchange", updateFullscreenBtn);
 document.getElementById("city").onclick = openSettings;
 document.getElementById("city").onkeydown = (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSettings(); }

@@ -416,6 +416,15 @@ html, body {
 .lang-options button.active { border-color: var(--accent); color: var(--accent); }
 .city-options { display: grid; grid-template-columns: repeat(3, 1fr); }
 .city-options button { text-align: center; padding: clamp(8px, 1.4vmin, 16px) clamp(4px, 0.8vmin, 10px); font-size: var(--fs-sm); }
+.fs-btn {
+  width: 100%;
+  padding: clamp(8px, 1.4vmin, 18px);
+  background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: var(--fs-md); cursor: pointer;
+  margin-bottom: calc(var(--gap) * 1.6);
+}
+.fs-btn:hover { border-color: var(--accent); color: var(--accent); }
 #settings-close {
   width: 100%;
   padding: clamp(8px, 1.4vmin, 18px);
