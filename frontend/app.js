@@ -111,7 +111,8 @@ async function loadWeather() {
 
 function renderWeather(data) {
   if (data.city) document.getElementById("city").textContent = data.city;
-  const temp = (v) => (v === null || v === undefined ? "--" : v + "°");
+  const temp = (v) => (v === null || v === undefined ? "--" : v + "°");   // today card keeps the °
+  const tempN = (v) => (v === null || v === undefined ? "--" : String(v)); // weekly: no ° (renders inconsistently across systems)
 
   const today = data.today || {};
   // JMA drops today's high/low later in the day — fall back to the met.no hourly.
@@ -146,8 +147,8 @@ function renderWeather(data) {
       `<div class="d-wd">${info.wd}</div>` +
       `<div class="d-md">${info.md}</div>` +
       `<div class="d-icon">${d.icon || "❓"}</div>` +
-      `<div class="d-temps"><span class="hi">${temp(d.tempMax)}</span> ` +
-      `<span class="lo">${temp(d.tempMin)}</span></div>` +
+      `<div class="d-temps"><span class="hi">${tempN(d.tempMax)}</span> ` +
+      `<span class="lo">${tempN(d.tempMin)}</span></div>` +
       (d.pop !== null && d.pop !== undefined ? `<div class="d-pop">${d.pop}%</div>` : "");
     weekly.appendChild(el);
   });
@@ -176,7 +177,7 @@ function renderHourly(list) {
     const item = document.createElement("div");
     item.className = "hour-item" + (i === 0 ? " now" : "");
     const label = i === 0 ? t("now") : (h.hour + t("hourUnit"));
-    const temp = (h.temp === null || h.temp === undefined) ? "--" : h.temp + "°";
+    const temp = (h.temp === null || h.temp === undefined) ? "--" : String(h.temp);   // no ° (see weekly)
     item.innerHTML =
       `<div class="hour-time">${label}</div>` +
       `<div class="hour-icon">${h.icon || "❓"}</div>` +
