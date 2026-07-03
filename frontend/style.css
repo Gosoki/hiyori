@@ -145,8 +145,9 @@ html, body {
   justify-content: center;
   gap: clamp(2px, 0.6vmin, 8px);
   text-align: center;
+  border-left: 1px solid transparent;   /* uniform content box so every column centers alike */
 }
-.day + .day { border-left: 1px solid var(--border); }
+.day + .day { border-left-color: var(--border); }
 .day .d-wd { font-size: var(--fs-sm); font-weight: 600; }
 .day .d-md { font-size: var(--fs-xs); color: var(--text-dim); }
 .day .d-icon { font-size: clamp(22px, 4.6vmin, 60px); line-height: 1; }
