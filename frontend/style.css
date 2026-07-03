@@ -225,6 +225,12 @@ html, body {
   background: #0a0e14;
   overflow: hidden;
   animation: quake-in 0.35s ease-out;
+  /* left column (recent-quakes list stacked above the Okinawa inset) — shared metrics */
+  --eq-left: clamp(8px, 1.6vmin, 22px);      /* inset from the left edge */
+  --eq-bottom: clamp(10px, 2vmin, 28px);     /* inset from the bottom edge */
+  --eq-w: clamp(280px, 34%, 560px);          /* recent list width = 地震情報 panel width */
+  --eq-gap: clamp(8px, 1.4vmin, 16px);
+  --eq-oki: clamp(224px, 35vmin, 448px);     /* Okinawa square side (vmin → width == height) */
 }
 .hidden { display: none !important; }
 @keyframes quake-in { from { opacity: 0; } to { opacity: 1; } }
@@ -233,11 +239,11 @@ html, body {
 .japan-svg { width: 100%; height: 100%; }
 .japan-main { position: absolute; inset: 0; }
 .okinawa-inset {
-  position: absolute;
-  left: clamp(8px, 1.6vmin, 22px);
-  top: clamp(8px, 1.6vmin, 22px);
-  width: clamp(320px, 40%, 620px);
-  height: clamp(210px, 30vmin, 430px);
+  position: absolute;                 /* FIXED at the bottom-left corner (SW, where Okinawa is) */
+  left: var(--eq-left);
+  bottom: var(--eq-bottom);
+  width: var(--eq-oki);
+  height: var(--eq-oki);              /* square */
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 0.6);
   background: rgba(13, 17, 23, 0.55);
@@ -252,7 +258,7 @@ html, body {
   position: absolute;
   bottom: clamp(10px, 2vmin, 28px);
   right: clamp(10px, 2vmin, 28px);
-  width: clamp(280px, 34%, 560px);
+  width: var(--eq-w);            /* same width as the recent-quakes list */
   max-height: 82%;
   display: flex; flex-direction: column;
   background: rgba(13, 17, 23, 0.82);
@@ -339,15 +345,14 @@ html, body {
 }
 .quake-remaining { color: var(--text-dim); font-size: var(--fs-xs); }
 
-/* recent-quakes browse list (manual 🗾 mode) — left column, below the inset */
+/* recent-quakes browse list (🗾 mode) — top-left corner. Top-anchored + auto
+   height: grows downward, never needs a scrollbar. Okinawa sits at bottom-left. */
 .quake-recent {
   position: absolute;
-  left: clamp(8px, 1.6vmin, 22px);
-  top: calc(clamp(8px, 1.6vmin, 22px) + clamp(210px, 30vmin, 430px) + clamp(8px, 1.4vmin, 16px));
-  bottom: clamp(10px, 2vmin, 28px);
-  width: clamp(240px, 32%, 440px);
+  left: var(--eq-left);
+  top: var(--eq-left);
+  width: var(--eq-w);
   display: flex; flex-direction: column; gap: clamp(4px, 0.7vmin, 8px);
-  overflow: auto;
 }
 .rq-title { font-size: var(--fs-xs); color: var(--text-dim); padding: 0 2px clamp(2px, 0.5vmin, 6px); }
 .rq-item {
@@ -433,8 +438,8 @@ html, body {
   }
   .today .t-icon { font-size: clamp(38px, 10vw, 84px); }
 
-  /* earthquake: wider info panel on the narrow (portrait) screen */
-  .quake-panel { width: clamp(260px, 56%, 700px); }
+  /* earthquake: wider info panel (and matching recent list) on the narrow screen */
+  #quake-overlay { --eq-w: clamp(260px, 56%, 700px); }
 }
 
 /* Narrow screens: single news column so headlines stay readable */
