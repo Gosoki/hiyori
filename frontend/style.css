@@ -1,10 +1,12 @@
 :root {
-  --bg: #0d1117;
-  --bg-panel: #161b22;
-  --bg-card: #1c2330;
-  --border: #2a3240;
-  --text: #e6edf3;
-  --text-dim: #8b98a9;
+  /* Neutral grays (VS Code-style) — no blue tint, to cut blue light.
+     Blue is kept only for numeric values (--pop / --temp-lo) and small accents. */
+  --bg: #131313;
+  --bg-panel: #1c1c1c;
+  --bg-card: #242424;
+  --border: #333333;
+  --text: #e0e0e0;
+  --text-dim: #9a9a9a;
   --accent: #4aa8ff;
   --danger: #ff5a5a;
   --temp-hi: #ff7b6b;
@@ -36,6 +38,8 @@ html, body {
   font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo",
     "Noto Sans CJK JP", "Segoe UI", system-ui, sans-serif;
   overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
 }
 /* Pick fonts by the content's own language so Chinese doesn't render with
    Japanese glyph forms (Han unification) and vice-versa. Elements are tagged
@@ -50,8 +54,6 @@ html, body {
 }
 :lang(en) {
   font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 /* ============================ Layout shell ============================ */
@@ -222,7 +224,7 @@ html, body {
    bottom-left→top-right diagonal, so the top-left corner is empty sea. */
 #quake-overlay {
   position: fixed; inset: 0; z-index: 1000;
-  background: #0a0e14;
+  background: #141414;
   overflow: hidden;
   animation: quake-in 0.35s ease-out;
   /* left column (recent-quakes list stacked above the Okinawa inset) — shared metrics */
@@ -246,7 +248,7 @@ html, body {
   height: var(--eq-oki);              /* square */
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 0.6);
-  background: rgba(13, 17, 23, 0.55);
+  background: rgba(26, 26, 26, 0.55);
   overflow: hidden;
 }
 .okinawa-label {
@@ -261,7 +263,7 @@ html, body {
   width: var(--eq-w);            /* same width as the recent-quakes list */
   max-height: 82%;
   display: flex; flex-direction: column;
-  background: rgba(13, 17, 23, 0.82);
+  background: rgba(26, 26, 26, 0.85);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
@@ -292,7 +294,7 @@ html, body {
   height: clamp(40px, 5.5vmin, 66px);
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: rgba(13, 17, 23, 0.82);
+  background: rgba(26, 26, 26, 0.85);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   color: #fff;
@@ -360,7 +362,7 @@ html, body {
   padding: clamp(5px, 0.9vmin, 11px) clamp(7px, 1vmin, 13px);
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 0.6);
-  background: rgba(13, 17, 23, 0.78);
+  background: rgba(26, 26, 26, 0.8);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   cursor: pointer;
 }
@@ -377,7 +379,7 @@ html, body {
 .i6s { background: var(--i6s); } .i7 { background: var(--i7); }
 
 /* Japan map (SVG) — prefecture fills by intensity + epicenter marker */
-.japan-svg .pref { fill: #232c3d; stroke: #0b0f16; stroke-width: 0.03; }
+.japan-svg .pref { fill: #2b2b2b; stroke: #101010; stroke-width: 0.03; }
 .japan-svg .pref.i1 { fill: var(--i1); } .japan-svg .pref.i2 { fill: var(--i2); }
 .japan-svg .pref.i3 { fill: var(--i3); } .japan-svg .pref.i4 { fill: var(--i4); }
 .japan-svg .pref.i5w { fill: var(--i5w); } .japan-svg .pref.i5s { fill: var(--i5s); }
@@ -390,7 +392,7 @@ html, body {
 /* ============================ Settings ============================ */
 #settings-overlay {
   position: fixed; inset: 0; z-index: 1100;
-  background: rgba(8, 10, 16, 0.9);
+  background: rgba(0, 0, 0, 0.86);
   display: flex; align-items: center; justify-content: center;
 }
 .settings-card {
@@ -399,10 +401,12 @@ html, body {
   border-radius: var(--radius);
   padding: clamp(16px, 3vmin, 40px);
   min-width: min(84vw, 420px);
+  max-height: 92vh;
+  overflow-y: auto;
 }
 .settings-card h3 { font-size: var(--fs-lg); margin-bottom: var(--gap); }
 .settings-card label { display: block; color: var(--text-dim); font-size: var(--fs-sm); margin-bottom: var(--gap); }
-.lang-options { display: flex; flex-direction: column; gap: var(--gap); margin-bottom: calc(var(--gap) * 1.6); }
+.lang-options { display: flex; flex-direction: column; gap: var(--gap); margin-bottom: var(--gap); }
 .lang-options button {
   padding: clamp(8px, 1.4vmin, 18px) clamp(12px, 2vmin, 26px);
   background: var(--bg-card);
@@ -422,7 +426,7 @@ html, body {
   background: var(--bg-card);
   border: 1px solid var(--border); border-radius: var(--radius);
   color: var(--text); font-size: var(--fs-md); cursor: pointer;
-  margin-bottom: calc(var(--gap) * 1.6);
+  margin-bottom: var(--gap);
 }
 .fs-btn:hover { border-color: var(--accent); color: var(--accent); }
 #settings-close {
@@ -430,7 +434,7 @@ html, body {
   padding: clamp(8px, 1.4vmin, 18px);
   background: var(--accent);
   border: none; border-radius: var(--radius);
-  color: #06121f; font-size: var(--fs-md); font-weight: 700; cursor: pointer;
+  color: #0a0a0a; font-size: var(--fs-md); font-weight: 700; cursor: pointer;
 }
 
 /* ============================ Portrait: restack ============================ */

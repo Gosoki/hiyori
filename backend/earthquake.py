@@ -202,10 +202,11 @@ class EarthquakeService:
         ).isoformat(timespec="seconds")
         event["expiresAt"] = now + self.hold
 
-        if event.get("cancelled"):
-            self.current = None            # EEW cancellation clears the screen
-        else:
-            self.current = event
+        # Always keep the 🗾 browse list complete, regardless of size.
         if event["kind"] == "quake":
             self.recent = _merge_recent(self.recent, event, self.recent_cap)
+
+        # Broadcast every event; each device decides — by its own 震度 threshold —
+        # whether to take over the full screen (the filter lives in the frontend).
+        self.current = None if event.get("cancelled") else event
         await self.on_event(event)

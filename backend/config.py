@@ -67,6 +67,10 @@ P2P_WS_URL = "wss://api.p2pquake.net/v2/ws"
 EARTHQUAKE_HOLD_SECONDS = 90    # keep the earthquake screen for 90 seconds
 EARTHQUAKE_SHOW_TEST = False    # show EEW drill (訓練) messages as full-screen?
 EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets you browse
+# Default full-screen 震度 threshold for a new device (each device can change it in
+# ⚙ Settings; smaller quakes stay in the 🗾 list without a full-screen alert).
+# Codes: 10=1 20=2 30=3 40=4 45=5弱 50=5強 55=6弱 60=6強 70=7 . Default 30 (震度3+).
+EARTHQUAKE_MIN_SCALE = 30
 
 # --- UI ---------------------------------------------------------------------
 DEFAULT_LANGUAGE = "ja"   # ja / zh / en. Each device can override in Settings.

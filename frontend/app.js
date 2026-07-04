@@ -10,6 +10,7 @@ let cityId = localStorage.getItem("city") || null;
 let cities = [];
 let aiSrc = localStorage.getItem("aiSrc") || null;
 let aiSources = [];
+let minScale = Number(localStorage.getItem("minScale")) || null;   // 震度 code; below → no full-screen
 
 function t(key) {
   return (window.I18N[lang] && window.I18N[lang][key]) || window.I18N.ja[key] || key;
@@ -77,6 +78,25 @@ function buildAiOptions() {
       localStorage.setItem("aiSrc", s.id);
       buildAiOptions();
       loadNews();       // switch immediately
+    };
+    wrap.appendChild(b);
+  });
+}
+
+// full-screen 震度 threshold (per device): quakes below this stay in the 🗾 list only
+const THRESHOLDS = [{ scale: 30, label: "3+" }, { scale: 40, label: "4+" }, { scale: 45, label: "5弱+" }];
+function buildThresholdOptions() {
+  const wrap = document.getElementById("threshold-options");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  THRESHOLDS.forEach((th) => {
+    const b = document.createElement("button");
+    b.textContent = th.label;
+    if (th.scale === minScale) b.classList.add("active");
+    b.onclick = () => {
+      minScale = th.scale;
+      localStorage.setItem("minScale", th.scale);
+      buildThresholdOptions();
     };
     wrap.appendChild(b);
   });
@@ -241,6 +261,10 @@ const eventBase = (ev) => ev.kind + ":" + ev.id;
 
 const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 50: "i5s", 55: "i6w", 60: "i6s", 70: "i7" };
 function scaleClass(s) { return SCALE_CLASS[s] || "i1"; }
+function quakeScale(ev) {
+  const s = Number(ev && ev.maxScale);
+  return Number.isFinite(s) ? s : 999;   // unknown intensity → fail-safe: show it
+}
 
 function formatDepth(km) {
   if (km === null || km === undefined || km < 0) return t("unknown");
@@ -269,6 +293,7 @@ function handleQuake(ev) {
     const key = ev.originTime || ev.id;
     recentQuakes = [ev, ...recentQuakes.filter((e) => (e.originTime || e.id) !== key)].slice(0, 5);
   }
+  if (quakeScale(ev) < (minScale || 0)) return;    // below this device's 震度 threshold → 🗾 list only
   if (!manualMode && eventBase(ev) === dismissedBase) return;  // user closed this one
   dismissedBase = null;
   manualMode = false;
@@ -505,12 +530,16 @@ function updateFullscreenBtn() {
   if (btn) btn.textContent = t(isFullscreen() ? "exitFullscreen" : "fullscreen");
 }
 function toggleFullscreen() {
-  if (isFullscreen()) {
-    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-  } else {
-    const el = document.documentElement;
-    (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
-  }
+  try {
+    if (isFullscreen()) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) { const p = exit.call(document); if (p && p.catch) p.catch(() => {}); }
+    } else {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const p = req.call(el); if (p && p.catch) p.catch(() => {}); }
+    }
+  } catch (_) { /* Fullscreen API unavailable (locked-down webview) */ }
 }
 document.getElementById("fullscreen-btn").onclick = toggleFullscreen;
 document.addEventListener("fullscreenchange", updateFullscreenBtn);
@@ -538,6 +567,7 @@ async function init() {
   if (!window.I18N[lang]) lang = "ja";
   if (!cityId) cityId = cfg.city || "tokyo";
   if (!aiSrc) aiSrc = cfg.aiSource || "cn";
+  if (!minScale) minScale = cfg.minScale || 30;
   try { cities = await (await fetch("/api/cities")).json(); } catch (_) { cities = []; }
   try { aiSources = await (await fetch("/api/ai-sources")).json(); } catch (_) { aiSources = []; }
 
@@ -545,6 +575,7 @@ async function init() {
   buildLangOptions();
   buildCityOptions();
   buildAiOptions();
+  buildThresholdOptions();
   startClock();
   loadWeather();
   loadHourly();

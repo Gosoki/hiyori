@@ -150,7 +150,7 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/api/config")
 async def api_config():
     return {"language": config.DEFAULT_LANGUAGE, "city": config.DEFAULT_CITY,
-            "aiSource": config.DEFAULT_AI_SOURCE}
+            "aiSource": config.DEFAULT_AI_SOURCE, "minScale": config.EARTHQUAKE_MIN_SCALE}
 
 
 @app.get("/api/cities")
