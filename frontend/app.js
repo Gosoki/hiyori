@@ -168,8 +168,8 @@ function renderWeather(data) {
       `<div class="d-wd">${info.wd}</div>` +
       `<div class="d-md">${info.md}</div>` +
       `<div class="d-icon">${d.icon || "❓"}</div>` +
-      `<div class="d-temps"><span class="hi">${tempN(d.tempMax)}</span> ` +
-      `<span class="lo">${tempN(d.tempMin)}</span></div>` +
+      `<div class="d-temps"><span class="hi">${tempN(d.tempMax)}</span>` +
+      `<span class="d-sep"> / </span><span class="lo">${tempN(d.tempMin)}</span></div>` +
       (d.pop !== null && d.pop !== undefined ? `<div class="d-pop">${d.pop}%</div>` : "");
     weekly.appendChild(el);
   });

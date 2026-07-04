@@ -25,7 +25,7 @@
   --fs-lg: clamp(19px, 3vmin, 42px);
   --fs-xl: clamp(26px, 4.6vmin, 68px);
   --fs-xxl: clamp(40px, 9vmin, 130px);
-  --gap: clamp(6px, 1.3vmin, 22px);
+  --gap: clamp(4px, 0.9vmin, 14px);
   --radius: clamp(8px, 1.4vmin, 16px);
 }
 
@@ -93,7 +93,7 @@ html, body {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--gap) clamp(10px, 1.6vmin, 26px);
+  padding: var(--gap) clamp(6px, 1.05vmin, 15px);
   overflow: hidden;
   min-height: 0;
 }
@@ -114,7 +114,7 @@ html, body {
   flex-direction: column;
   justify-content: center;
   gap: clamp(2px, 0.6vmin, 8px);
-  padding: var(--gap) clamp(10px, 1.5vmin, 24px);
+  padding: var(--gap) clamp(6px, 0.95vmin, 14px);
   background: var(--bg-card);
   border-radius: var(--radius);
   min-width: 0;
@@ -136,27 +136,35 @@ html, body {
   min-width: 0;
   background: var(--bg-card);
   border-radius: var(--radius);
-  padding: var(--gap) clamp(6px, 1vmin, 16px);
+  padding: var(--gap) clamp(3px, 0.7vmin, 9px);
 }
 .day {
   flex: 1 1 0;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  /* 4 corners around a centered icon → fills the whole cell (wide enough case) */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "date  wd"
+    "icon  icon"
+    "temps pop";
   align-items: center;
-  justify-content: center;
-  gap: clamp(2px, 0.6vmin, 8px);
+  gap: clamp(2px, 0.4vmin, 6px) clamp(3px, 0.7vmin, 10px);
+  padding: clamp(1px, 0.5vmin, 7px) clamp(3px, 0.7vmin, 10px);
   text-align: center;
-  border-left: 1px solid transparent;   /* uniform content box so every column centers alike */
+  border-left: 1px solid transparent;   /* uniform content box across all columns */
 }
 .day + .day { border-left-color: var(--border); }
-.day .d-wd { font-size: var(--fs-sm); font-weight: 600; }
-.day .d-md { font-size: var(--fs-xs); color: var(--text-dim); }
-.day .d-icon { font-size: clamp(22px, 4.6vmin, 60px); line-height: 1; }
-.day .d-temps { font-size: var(--fs-sm); font-weight: 600; }
+/* the 4 corner labels share one size (--fs-sm) so no corner dominates */
+.day .d-wd    { grid-area: wd;    justify-self: end;    font-size: var(--fs-sm); font-weight: 600; }
+.day .d-md    { grid-area: date;  justify-self: start;  font-size: var(--fs-sm); color: var(--text-dim); }
+.day .d-icon  { grid-area: icon;  justify-self: center; font-size: clamp(26px, 6vmin, 84px); line-height: 1; }
+.day .d-temps { grid-area: temps; justify-self: start;  font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
 .day .d-temps .hi { color: var(--temp-hi); }
 .day .d-temps .lo { color: var(--text-dim); }
-.day .d-pop { font-size: var(--fs-xs); color: var(--pop); }
+.day .d-temps .d-sep { color: var(--text-dim); font-weight: 400; }
+.day .d-pop   { grid-area: pop;   justify-self: end;    font-size: var(--fs-sm); color: var(--pop); }
 .day.is-sat .d-wd { color: var(--temp-lo); }
 .day.is-sun .d-wd { color: var(--temp-hi); }
 
@@ -167,14 +175,14 @@ html, body {
   gap: clamp(2px, 0.5vmin, 8px);
   background: var(--bg-card);
   border-radius: var(--radius);
-  padding: var(--gap) clamp(6px, 1vmin, 16px);
+  padding: var(--gap) clamp(3px, 0.7vmin, 9px);
   overflow: hidden;
 }
 .hour-item {
   flex: 1 1 0; min-width: 0;
   display: flex; flex-direction: column; align-items: center;
   gap: clamp(1px, 0.3vmin, 4px);
-  padding: clamp(3px, 0.6vmin, 8px) 0;
+  padding: clamp(1px, 0.4vmin, 5px) 0;
   border-radius: calc(var(--radius) * 0.5);
   text-align: center;
 }
@@ -191,7 +199,7 @@ html, body {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--gap) clamp(10px, 1.6vmin, 26px);
+  padding: var(--gap) clamp(6px, 1.05vmin, 15px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -458,4 +466,6 @@ html, body {
 /* Narrow screens: single news column so headlines stay readable */
 @media (max-width: 640px) {
   #news { grid-template-columns: 1fr; }
+  /* cells too narrow for the 4-corner layout → back to a centered vertical stack */
+  .weekly .day { display: flex; flex-direction: column; justify-content: space-between; }
 }
