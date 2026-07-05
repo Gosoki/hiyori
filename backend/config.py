@@ -88,6 +88,16 @@ HOURLY_STEP = 2         # hours between points (2 → 12 points cover a full day
 # --- Weekly forecast --------------------------------------------------------
 WEEKLY_COUNT = 6    # days shown in the weekly strip (fixed; JMA gives 6–7 → capped)
 
+# --- Exchange rate (open.er-api.com, free, no key; ~daily rates) -------------
+# The bottom widget shows both directions: 1 FX_BASE = x FX_QUOTE and 1 FX_QUOTE
+# = x FX_BASE. When x would round below 1, the base amount is padded (×10) so the
+# shown number is always a whole number (e.g. 100 円 = 4 元).
+FX_BASE = "CNY"
+FX_QUOTE = "JPY"
+FX_BASE_LABEL = "元"    # short display label per currency
+FX_QUOTE_LABEL = "円"
+FX_REFRESH = 3600
+
 # --- Refresh intervals (seconds) --------------------------------------------
 WEATHER_REFRESH = 600
 NEWS_REFRESH = 300

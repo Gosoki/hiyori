@@ -212,6 +212,30 @@ function renderHourly(list) {
   });
 }
 
+// ---- exchange rate ---------------------------------------------------------
+let lastFx = null;
+async function loadFx() {
+  try {
+    const fx = await (await fetch("/api/fx")).json();
+    if (fx && fx.rate) { lastFx = fx; renderFx(fx); }
+  } catch (_) { /* keep last */ }
+}
+// "N from = M to", padding the base amount ×10 until M rounds to a whole number ≥ 1.
+function fxLine(fromLabel, toLabel, rate) {
+  let n = 1;
+  while (Math.round(rate * n) < 1 && n < 1e6) n *= 10;
+  const m = Math.round(rate * n);
+  return `<span class="fx-n">${n}</span> ${fromLabel} = <span class="fx-n">${m}</span> ${toLabel}`;
+}
+function renderFx(fx) {
+  const body = document.getElementById("fx-body");
+  if (!body) return;
+  if (!fx || !fx.rate) { body.innerHTML = '<span class="slot-dim">—</span>'; return; }
+  body.innerHTML =
+    `<div class="fx-line">${fxLine(fx.baseLabel, fx.quoteLabel, fx.rate)}</div>` +
+    `<div class="fx-line">${fxLine(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>`;
+}
+
 function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
   if (!dateStr) return { wd: fallbackWd || "", md: fallbackMd || "", dow: -1 };
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -584,6 +608,7 @@ async function init() {
   loadWeather();
   loadHourly();
   loadNews();
+  loadFx();
   if (window.QuakeMap) window.QuakeMap.init("quake-map");   // preload map in background
   loadRecentQuakes();
   pollQuake();
@@ -592,6 +617,7 @@ async function init() {
   setInterval(loadWeather, 10 * 60 * 1000);
   setInterval(loadHourly, 15 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
+  setInterval(loadFx, 30 * 60 * 1000);
   setInterval(pollQuake, 30 * 1000);
   setInterval(loadRecentQuakes, 3 * 60 * 1000);
 }

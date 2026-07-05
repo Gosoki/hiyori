@@ -14,6 +14,7 @@
   - 地震：P2P地震情報 (WebSocket) — 地震情報(551) + 緊急地震速報 EEW(556)
   - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,红色高亮,平时不显示)
   - AI・テック：每台设备可在设置里切换 **中文**(量子位 + Solidot)/ **日本語**(ITmedia AI+)/ **Global**(Hacker News)
+  - 汇率：open.er-api.com(底部小卡片,双向显示,数值取整、不足则给基数补 0,如 `100 円 = 4 元`)
 
 界面默认日语，点左上角地区名打开设置，可切换 城市 / AI ソース / 语言(日本語・中文・English) / **地震全屏最小震度**(3+/4+/5弱+) / 全屏开关（均每台设备各自记忆）。低于阈值的小地震不抢屏，只进 🗾 列表。
 
@@ -95,6 +96,7 @@ chrome.exe --kiosk --app=http://<linux机器IP>:8000 --incognito --noerrdialogs 
 | 严重灾害警报关键词 | `ALERT_KEYWORDS`(想收台风/暴风就加 `"台風"` `"暴風"`);`ALERT_FEED` 为 NERV 源 |
 | 地震全屏保持时长 | `EARTHQUAKE_HOLD_SECONDS`（默认 90 秒） |
 | 全屏最小震度(默认值) | `EARTHQUAKE_MIN_SCALE`（默认 30=震度3；每台设备可在设置里改。10=1 40=4 45=5弱…） |
+| 汇率货币对 | `FX_BASE` / `FX_QUOTE`（币种代码,如 CNY/JPY）+ `FX_BASE_LABEL` / `FX_QUOTE_LABEL`（显示名,如 元/円） |
 | 是否显示 EEW 训练报 | `EARTHQUAKE_SHOW_TEST` |
 | 默认语言 | `DEFAULT_LANGUAGE`（`ja`/`zh`/`en`） |
 | 加新语言 | 在 `frontend/i18n.js` 复制一个语言块翻译即可 |
@@ -110,6 +112,7 @@ hiyori/
 │   ├── config.py        所有可调参数
 │   ├── weather.py       JMA 天气抓取与解析
 │   ├── news.py          RSS 标题聚合
+│   ├── fx.py            汇率抓取 (open.er-api)
 │   ├── earthquake.py    P2P地震情報 WebSocket 客户端
 │   ├── requirements.txt
 │   └── run.sh
