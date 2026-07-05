@@ -220,20 +220,20 @@ async function loadFx() {
     if (fx && fx.rate) { lastFx = fx; renderFx(fx); }
   } catch (_) { /* keep last */ }
 }
-// "N from = M to", padding the base amount ×10 until M rounds to a whole number ≥ 1.
-function fxLine(fromLabel, toLabel, rate) {
-  let n = 1;
-  while (Math.round(rate * n) < 1 && n < 1e6) n *= 10;
-  const m = Math.round(rate * n);
-  return `<span class="fx-n">${n}</span> ${fromLabel} = <span class="fx-n">${m}</span> ${toLabel}`;
+function fxFmt(v) { return v.toFixed(3).replace(/\.?0+$/, ""); }   // 3 decimals, trim trailing zeros
+// If the converted amount's integer part is < 1, scale BOTH sides ×10 until it's ≥ 1.
+function fxPair(fromLabel, toLabel, rate) {
+  let n = 1, val = rate;
+  while (val < 1 && n < 1e6) { n *= 10; val = rate * n; }
+  return `${n}${fromLabel}=<span class="fx-n">${fxFmt(val)}</span>${toLabel}`;
 }
 function renderFx(fx) {
   const body = document.getElementById("fx-body");
   if (!body) return;
   if (!fx || !fx.rate) { body.innerHTML = '<span class="slot-dim">—</span>'; return; }
-  body.innerHTML =
-    `<div class="fx-line">${fxLine(fx.baseLabel, fx.quoteLabel, fx.rate)}</div>` +
-    `<div class="fx-line">${fxLine(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>`;
+  body.innerHTML =                            // one direction per line
+    `<div class="fx-line">${fxPair(fx.baseLabel, fx.quoteLabel, fx.rate)}</div>` +
+    `<div class="fx-line">${fxPair(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>`;
 }
 
 function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
@@ -276,6 +276,34 @@ function fillNewsList(id, items, contentLang) {
       li.appendChild(src);
     }
     ul.appendChild(li);
+  });
+  clampListToFit(ul);
+}
+
+// Hide any trailing headline that can't fully fit (drop the partially-clipped last line).
+function clampListToFit(ul) {
+  if (!ul || ul.getBoundingClientRect().height < 4) return;
+  const kids = Array.from(ul.children);
+  kids.forEach((li) => { li.style.display = ""; });     // show all first
+  const bottom = ul.getBoundingClientRect().bottom;     // ul height is fixed (flex:1), stable
+  let clipped = false;
+  kids.forEach((li) => {
+    if (clipped) { li.style.display = "none"; return; }
+    if (li.getBoundingClientRect().bottom > bottom + 0.5) { li.style.display = "none"; clipped = true; }
+  });
+}
+
+// The news row is a 1fr grid track, so its height shifts as the weather panel
+// (auto height) renders/updates. Re-clamp whenever a list's box actually changes.
+let newsObserver;
+function observeNewsLists() {
+  if (newsObserver || !window.ResizeObserver) return;
+  newsObserver = new ResizeObserver((entries) => {
+    for (const e of entries) clampListToFit(e.target);
+  });
+  ["news-ai", "news-japan"].forEach((id) => {
+    const ul = document.getElementById(id);
+    if (ul) newsObserver.observe(ul);
   });
 }
 
@@ -618,6 +646,7 @@ async function init() {
   setInterval(loadHourly, 15 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
   setInterval(loadFx, 30 * 60 * 1000);
+  observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)
   setInterval(pollQuake, 30 * 1000);
   setInterval(loadRecentQuakes, 3 * 60 * 1000);
 }

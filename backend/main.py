@@ -162,6 +162,15 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 
+@app.middleware("http")
+async def no_store(request, call_next):
+    # Force the browser to revalidate on every load so frontend edits show up on a
+    # normal refresh (StaticFiles still answers 304 when unchanged — cheap).
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/api/config")
 async def api_config():
     return {"language": config.DEFAULT_LANGUAGE, "city": config.DEFAULT_CITY,

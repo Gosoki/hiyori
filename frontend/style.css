@@ -233,20 +233,21 @@ html, body {
 .loading { color: var(--text-dim); font-size: var(--fs-sm); }
 
 /* ============================ Bottom bar ============================ */
-#bottombar { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); min-width: 0; }
+/* FX : anime column split mirrors the weather row's today-card : forecast split */
+#bottombar { display: grid; grid-template-columns: clamp(150px, 24%, 320px) minmax(0, 1fr); gap: var(--gap); min-width: 0; }
 .info-slot {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: clamp(5px, 1vmin, 14px) clamp(8px, 1.3vmin, 20px);
-  display: flex; align-items: center; gap: clamp(8px, 1.6vmin, 22px);
+  display: flex; align-items: center; gap: clamp(6px, 1.2vmin, 16px);
   min-width: 0; overflow: hidden;
 }
 .slot-title { flex: 0 0 auto; font-size: var(--fs-sm); color: var(--text-dim); }
-.slot-body { min-width: 0; display: flex; flex-direction: column; gap: clamp(1px, 0.3vmin, 4px); }
-.slot-dim { color: var(--text-dim); font-size: var(--fs-sm); }
-.fx-line { font-size: var(--fs-sm); white-space: nowrap; color: var(--text-dim); }
-.fx-line .fx-n { color: var(--text); font-weight: 600; }
+.slot-body { min-width: 0; display: flex; flex-direction: column; gap: clamp(1px, 0.3vmin, 4px); font-size: var(--fs-sm); color: var(--text-dim); }
+.slot-dim { color: var(--text-dim); }
+.fx-line { white-space: nowrap; }
+.fx-n { color: var(--text); font-weight: 600; }
 
 /* ============================ Earthquake overlay ============================ */
 /* Map fills the whole screen; info floats top-left. Japan sits along the
