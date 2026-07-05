@@ -103,10 +103,11 @@ function buildThresholdOptions() {
 }
 
 // ---- clock -----------------------------------------------------------------
-function formatDate() {
-  return new Intl.DateTimeFormat(locale, {
-    month: "long", day: "numeric", weekday: "short",
-  }).format(new Date());
+function formatDateOnly() {
+  return new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" }).format(new Date());
+}
+function formatWeekday() {
+  return new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date());
 }
 
 function startClock() {
@@ -115,8 +116,10 @@ function startClock() {
     timeEl.textContent = new Intl.DateTimeFormat(locale, {
       hour: "2-digit", minute: "2-digit", hour12: false,
     }).format(new Date());
-    const dateEl = document.getElementById("today-date");   // date lives in the today card now
-    if (dateEl) dateEl.textContent = formatDate();
+    const dateEl = document.getElementById("today-date");   // date + weekday live in the today card
+    if (dateEl) dateEl.textContent = formatDateOnly();
+    const wdEl = document.getElementById("today-wd");
+    if (wdEl) wdEl.textContent = formatWeekday();
   };
   tick();
   setInterval(tick, 5000);
@@ -146,7 +149,8 @@ function renderWeather(data) {
     }
   }
   document.getElementById("today").innerHTML =
-    `<div class="t-date" id="today-date">${formatDate()}</div>` +
+    `<div class="t-date"><span id="today-date">${formatDateOnly()}</span>` +
+    `<span id="today-wd" class="t-wd">${formatWeekday()}</span></div>` +
     `<div class="today-main">` +
       `<div class="t-icon">${today.icon || "❓"}</div>` +
       `<div class="t-info">` +

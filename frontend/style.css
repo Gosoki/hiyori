@@ -125,7 +125,12 @@ html, body {
 .today .t-temps .hi { color: var(--temp-hi); }
 .today .t-temps .lo { color: var(--temp-lo); }
 .today .t-pop { font-size: var(--fs-sm); color: var(--pop); }
-.t-date { font-size: clamp(16px, 2.8vmin, 36px); color: var(--text); font-weight: 700; }
+.t-date {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: clamp(6px, 1.5vmin, 20px);
+  font-size: clamp(16px, 2.8vmin, 36px); color: var(--text); font-weight: 700;
+}
+.t-wd { flex: 0 0 auto; }   /* weekday pinned to the right of the date line */
 .today-main { display: flex; flex-direction: column; gap: clamp(2px, 0.6vmin, 8px); min-width: 0; }
 .t-info { display: flex; flex-direction: column; gap: clamp(2px, 0.6vmin, 8px); min-width: 0; }
 
@@ -160,7 +165,7 @@ html, body {
 .day .d-wd    { grid-area: wd;    justify-self: end;    font-size: var(--fs-sm); font-weight: 600; }
 .day .d-md    { grid-area: date;  justify-self: start;  font-size: var(--fs-sm); color: var(--text-dim); }
 .day .d-icon  { grid-area: icon;  justify-self: center; font-size: clamp(26px, 6vmin, 84px); line-height: 1; }
-.day .d-temps { grid-area: temps; justify-self: start;  font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.day .d-temps { grid-area: temps; justify-self: start;  font-size: var(--fs-sm); font-weight: 400; white-space: nowrap; }
 .day .d-temps .hi { color: var(--temp-hi); }
 .day .d-temps .lo { color: var(--text-dim); }
 .day .d-temps .d-sep { color: var(--text-dim); font-weight: 400; }
