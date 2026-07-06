@@ -104,6 +104,11 @@ FX_REFRESH = 3600
 ANIME_REFRESH = 21600   # 6 hours
 ANIME_COUNT = 24
 
+# --- Japanese holidays (holidays-jp, free, no key) --------------------------
+# The 為替 slot's 3rd line counts down to the next holiday. The day count itself
+# is computed client-side each render, so this only needs an occasional refresh.
+HOLIDAY_REFRESH = 43200   # 12 hours
+
 # --- Refresh intervals (seconds) --------------------------------------------
 WEATHER_REFRESH = 600
 NEWS_REFRESH = 300

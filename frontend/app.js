@@ -26,6 +26,7 @@ function applyI18n() {
   if (lastWeather) renderWeather(lastWeather);
   if (lastHourly) renderHourly(lastHourly);
   if (lastNews) renderNews(lastNews);
+  if (lastHoliday) renderHoliday(lastHoliday);
   updateFullscreenBtn();
 }
 
@@ -225,16 +226,42 @@ function fxFmt(v) { return v.toFixed(3).replace(/\.?0+$/, ""); }   // 3 decimals
 function fxPair(fromLabel, toLabel, rate) {
   let n = 1, val = rate;
   while (val < 1 && n < 1e6) { n *= 10; val = rate * n; }
-  return `${n}${fromLabel}=<span class="fx-n">${fxFmt(val)}</span>${toLabel}`;
+  return `${n}${fromLabel} = <span class="fx-n">${fxFmt(val)}</span>${toLabel}`;
 }
 function renderFx(fx) {
   const body = document.getElementById("fx-body");
   if (!body) return;
   if (!fx || !fx.rate) { body.innerHTML = '<span class="slot-dim">—</span>'; return; }
-  body.innerHTML =                            // one direction per line + a spare line
+  body.innerHTML =                            // one direction per line
     `<div class="fx-line">${fxPair(fx.baseLabel, fx.quoteLabel, fx.rate)}</div>` +
-    `<div class="fx-line">${fxPair(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>` +
-    `<div class="fx-line fx-spare">&nbsp;</div>`;
+    `<div class="fx-line">${fxPair(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>`;
+}
+
+// ---- next Japanese holiday countdown (3rd line under the fx rates) ----------
+let lastHoliday = null;
+async function loadHoliday() {
+  try {
+    const list = await (await fetch("/api/holiday")).json();
+    if (Array.isArray(list)) { lastHoliday = list; renderHoliday(list); }
+  } catch (_) { /* keep last */ }
+}
+function jstDateISO() {   // today's date in JST as "YYYY-MM-DD"
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+function renderHoliday(list) {
+  const el = document.getElementById("holiday-line");
+  if (!el) return;
+  const today = jstDateISO();
+  const next = (list || []).find((h) => h.date >= today);   // day count is computed here, always current
+  if (!next) { el.textContent = ""; return; }
+  const days = Math.round((Date.parse(next.date) - Date.parse(today)) / 86400000);
+  const nm = `<span class="hl-name" lang="ja">${escapeHtml(next.name)}</span>`;   // bold red, spaces around
+  const n = `<span class="hl-n">${days}</span>`;
+  if (lang === "ja") el.innerHTML = days === 0 ? `本日は ${nm}` : `${nm} まで ${n} 日`;
+  else if (lang === "en") el.innerHTML = days === 0 ? `Today: ${nm}` : `${n} days to ${nm}`;
+  else el.innerHTML = days === 0 ? `本日は ${nm}` : `距 ${nm} ${n} 天`;
 }
 
 // ---- anime schedule (今夜の放送) -------------------------------------------
@@ -258,7 +285,10 @@ function renderAnime(list) {
   // 18:00–23:59 today plus next-day late-night (24:00+) stay.
   if (jstHour() >= 18) items = items.filter((a) => a.time >= "18:00");
   if (!items.length) { body.innerHTML = `<span class="slot-dim">${t("comingSoon")}</span>`; return; }
-  body.innerHTML = items.slice(0, 9)            // chronological (backend already sorted); 3×3 grid
+  const shown = items.slice(0, 9);              // fixed 3-column grid, chronological (backend already sorted)
+  const rows = Math.ceil(shown.length / 3);     // ≤3 rows; fewer rows → more lines/cell
+  body.style.setProperty("--a-lines", rows <= 1 ? 3 : rows === 2 ? 2 : 1);
+  body.innerHTML = shown
     .map((a) => `<div class="a-cell"><span class="a-t">${escapeHtml(a.time)}</span> ${escapeHtml(a.title)}</div>`)
     .join("");
 }
@@ -666,6 +696,7 @@ async function init() {
   loadNews();
   loadFx();
   loadAnime();
+  loadHoliday();
   if (window.QuakeMap) window.QuakeMap.init("quake-map");   // preload map in background
   loadRecentQuakes();
   pollQuake();
@@ -675,6 +706,7 @@ async function init() {
   setInterval(loadHourly, 15 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
   setInterval(loadFx, 30 * 60 * 1000);
+  setInterval(loadHoliday, 60 * 60 * 1000);   // hourly; re-count days across midnight
   setInterval(loadAnime, 60 * 60 * 1000);   // hourly fetch
   setInterval(() => { if (lastAnime) renderAnime(lastAnime); }, 10 * 60 * 1000);   // re-apply the 18:00 cutoff promptly
   observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)

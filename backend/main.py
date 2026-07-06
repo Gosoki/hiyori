@@ -15,12 +15,13 @@ import config
 from anime import fetch_anime
 from earthquake import EarthquakeService, fetch_recent_quakes
 from fx import fetch_fx
+from holiday import fetch_holidays
 from news import fetch_alerts, fetch_news
 from weather import fetch_hourly, fetch_weather
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 
-state = {"japan": None, "fx": None, "anime": None}   # news + fx + anime schedule (shared)
+state = {"japan": None, "fx": None, "anime": None, "holiday": None}   # shared feeds
 weather_cache = {}   # city id -> {"data": ..., "ts": ...}
 hourly_cache = {}
 ai_cache = {}        # ai source id -> {"data": [...], "ts": ...}
@@ -151,6 +152,17 @@ async def anime_loop():
         await asyncio.sleep(max(60, config.ANIME_REFRESH - (sod % config.ANIME_REFRESH)))
 
 
+async def holiday_loop():
+    while True:
+        try:
+            fresh = await fetch_holidays()
+            if fresh:
+                state["holiday"] = fresh          # keep last good on error
+        except Exception:
+            pass
+        await asyncio.sleep(config.HOLIDAY_REFRESH)
+
+
 async def recent_quake_loop():
     # Seed the recent-quakes list from P2P history, then keep it fresh. Live WS
     # events also prepend to eq_service.recent, so this mainly covers startup/gaps.
@@ -171,6 +183,7 @@ async def lifespan(app):
         asyncio.create_task(news_loop()),
         asyncio.create_task(fx_loop()),
         asyncio.create_task(anime_loop()),
+        asyncio.create_task(holiday_loop()),
         asyncio.create_task(recent_quake_loop()),
         asyncio.create_task(eq_service.run()),
     ]
@@ -231,6 +244,11 @@ async def api_fx():
 @app.get("/api/anime")
 async def api_anime():
     return state["anime"] or []
+
+
+@app.get("/api/holiday")
+async def api_holiday():
+    return state["holiday"] or []
 
 
 @app.get("/api/earthquake/current")

@@ -42,13 +42,19 @@
       </div>
     </section>
 
-    <!-- Bottom row: two small slots (exchange rate + anime news placeholder) -->
+    <!-- Bottom row: left panel (為替 + 祝日, two stacked cells) + anime panel -->
     <section id="bottombar">
-      <div class="info-slot">
-        <span class="slot-title" data-i18n="fxTitle">為替</span>
-        <div class="slot-body" id="fx-body"><span class="slot-dim">—</span></div>
+      <div class="info-panel">
+        <div class="info-cell">
+          <span class="slot-title" data-i18n="fxTitle">為替</span>
+          <div class="slot-body" id="fx-body"><span class="slot-dim">—</span></div>
+        </div>
+        <div class="info-cell">
+          <span class="slot-title" data-i18n="holidayTitle">祝日</span>
+          <div class="slot-body"><div id="holiday-line"></div></div>
+        </div>
       </div>
-      <div class="info-slot">
+      <div class="info-panel anime-panel">
         <span class="slot-title" data-i18n="animeTitle">新番</span>
         <div class="slot-body" id="anime-body" lang="ja"><span class="slot-dim" data-i18n="comingSoon">準備中</span></div>
       </div>

@@ -233,30 +233,54 @@ html, body {
 .loading { color: var(--text-dim); font-size: var(--fs-sm); }
 
 /* ============================ Bottom bar ============================ */
-/* FX : anime column split mirrors the weather row's today-card : forecast split */
-#bottombar { display: grid; grid-template-columns: clamp(150px, 24%, 320px) minmax(0, 1fr); gap: var(--gap); min-width: 0; }
-.info-slot {
+/* Mirrors the weather panel: bordered outer panels holding bg-card inner cells.
+   Left panel = 為替 + 祝日 (two stacked cells); right panel = 新番 grid. Both
+   panels stretch to the same height so neither leaves a dead gap. */
+#bottombar { display: grid; grid-template-columns: clamp(160px, 22%, 300px) minmax(0, 1fr); gap: var(--gap); min-width: 0; align-items: stretch; }
+.info-panel {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: clamp(5px, 1vmin, 14px) clamp(8px, 1.3vmin, 20px);
-  display: flex; align-items: flex-start; gap: clamp(6px, 1.2vmin, 16px);
+  padding: var(--gap) clamp(6px, 1.05vmin, 15px);
+  display: flex; flex-direction: column; gap: var(--gap);
   min-width: 0; overflow: hidden;
 }
-.slot-body { flex: 1; }
+.info-cell {
+  flex: 1;                              /* cells split the panel height evenly */
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: clamp(4px, 0.9vmin, 12px) clamp(8px, 1.3vmin, 20px);
+  display: flex; align-items: center; gap: clamp(6px, 1.2vmin, 16px);
+  min-width: 0; overflow: hidden;
+}
 .slot-title { flex: 0 0 auto; font-size: var(--fs-sm); color: var(--text-dim); }
-.slot-body { min-width: 0; display: flex; flex-direction: column; gap: clamp(1px, 0.3vmin, 4px); font-size: var(--fs-sm); color: var(--text-dim); }
+.slot-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: clamp(1px, 0.3vmin, 4px); font-size: var(--fs-sm); color: var(--text-dim); }
 .slot-dim { color: var(--text-dim); }
 .fx-line { white-space: nowrap; }
 .fx-n { color: var(--text); font-weight: 600; }
-/* 新番: today's schedule as a 3×3 grid (9 shows), next-to-air first, long titles ellipsized */
+#holiday-line { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#holiday-line .hl-name { color: var(--temp-hi); font-weight: 700; }   /* holiday name: bold red */
+#holiday-line .hl-n { color: var(--text); font-weight: 600; }
+
+/* 新番: today's schedule as a fixed 3-column grid (≤9 shows), chronological.
+   Single flat panel (no inner card) — the 新番 label sits left of the grid, the
+   grid's rows stay compact and are centered vertically. Long titles clamp to
+   --a-lines lines (JS sets it from the row count). */
+.anime-panel { flex-direction: row; align-items: stretch; gap: clamp(6px, 1.2vmin, 16px); }
+.anime-panel .slot-title { align-self: flex-start; }
 #anime-body {
+  flex: 1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: clamp(1px, 0.3vmin, 5px) clamp(8px, 1.4vmin, 22px);
+  align-content: center;                /* compact rows, whole block vertically centered */
+  gap: clamp(3px, 0.9vmin, 12px) clamp(8px, 1.4vmin, 22px);
   line-height: 1.25; overflow: hidden;
 }
-#anime-body .a-cell { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#anime-body .a-cell {
+  min-width: 0; overflow: hidden; align-self: start;
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--a-lines, 1); line-clamp: var(--a-lines, 1);
+}
 #anime-body .a-t { color: var(--text); font-weight: 600; }
 
 /* ============================ Earthquake overlay ============================ */
