@@ -79,7 +79,7 @@ html, body {
 #city { cursor: pointer; }
 #city:hover { color: var(--accent); }
 .clock { text-align: center; line-height: 1.05; }
-#time { font-size: var(--fs-xl); font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+#time { font-size: var(--fs-xl); font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; cursor: pointer; }
 .topbar-actions { display: flex; align-items: center; gap: var(--gap); }
 #quake-toggle {
   background: none; border: none; color: var(--text-dim);

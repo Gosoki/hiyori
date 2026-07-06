@@ -625,6 +625,7 @@ function toggleFullscreen() {
   } catch (_) { /* Fullscreen API unavailable (locked-down webview) */ }
 }
 document.getElementById("fullscreen-btn").onclick = toggleFullscreen;
+document.getElementById("time").onclick = toggleFullscreen;   // tap the clock to toggle fullscreen
 document.addEventListener("fullscreenchange", updateFullscreenBtn);
 document.addEventListener("webkitfullscreenchange", updateFullscreenBtn);
 document.getElementById("city").onclick = openSettings;
