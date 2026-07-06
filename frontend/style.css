@@ -240,14 +240,24 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: clamp(5px, 1vmin, 14px) clamp(8px, 1.3vmin, 20px);
-  display: flex; align-items: center; gap: clamp(6px, 1.2vmin, 16px);
+  display: flex; align-items: flex-start; gap: clamp(6px, 1.2vmin, 16px);
   min-width: 0; overflow: hidden;
 }
+.slot-body { flex: 1; }
 .slot-title { flex: 0 0 auto; font-size: var(--fs-sm); color: var(--text-dim); }
 .slot-body { min-width: 0; display: flex; flex-direction: column; gap: clamp(1px, 0.3vmin, 4px); font-size: var(--fs-sm); color: var(--text-dim); }
 .slot-dim { color: var(--text-dim); }
 .fx-line { white-space: nowrap; }
 .fx-n { color: var(--text); font-weight: 600; }
+/* 新番: today's schedule as a 3×3 grid (9 shows), next-to-air first, long titles ellipsized */
+#anime-body {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(1px, 0.3vmin, 5px) clamp(8px, 1.4vmin, 22px);
+  line-height: 1.25; overflow: hidden;
+}
+#anime-body .a-cell { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#anime-body .a-t { color: var(--text); font-weight: 600; }
 
 /* ============================ Earthquake overlay ============================ */
 /* Map fills the whole screen; info floats top-left. Japan sits along the

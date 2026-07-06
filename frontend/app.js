@@ -231,9 +231,39 @@ function renderFx(fx) {
   const body = document.getElementById("fx-body");
   if (!body) return;
   if (!fx || !fx.rate) { body.innerHTML = '<span class="slot-dim">—</span>'; return; }
-  body.innerHTML =                            // one direction per line
+  body.innerHTML =                            // one direction per line + a spare line
     `<div class="fx-line">${fxPair(fx.baseLabel, fx.quoteLabel, fx.rate)}</div>` +
-    `<div class="fx-line">${fxPair(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>`;
+    `<div class="fx-line">${fxPair(fx.quoteLabel, fx.baseLabel, 1 / fx.rate)}</div>` +
+    `<div class="fx-line fx-spare">&nbsp;</div>`;
+}
+
+// ---- anime schedule (今夜の放送) -------------------------------------------
+let lastAnime = null;
+async function loadAnime() {
+  try {
+    const list = await (await fetch("/api/anime")).json();
+    if (Array.isArray(list)) { lastAnime = list; renderAnime(list); }
+  } catch (_) { /* keep last */ }
+}
+function nowHHMM() {   // current time in JST as "HH:MM"
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date());
+}
+function renderAnime(list) {
+  const body = document.getElementById("anime-body");
+  if (!body) return;
+  if (!Array.isArray(list) || !list.length) {
+    body.innerHTML = `<span class="slot-dim">${t("comingSoon")}</span>`;
+    return;
+  }
+  const now = nowHHMM();                       // rotate so the next-to-air shows come first
+  let start = list.findIndex((a) => a.time >= now);
+  if (start < 0) start = 0;
+  const ordered = list.slice(start).concat(list.slice(0, start)).slice(0, 9);   // 3×3 grid
+  body.innerHTML = ordered
+    .map((a) => `<div class="a-cell"><span class="a-t">${escapeHtml(a.time)}</span> ${escapeHtml(a.title)}</div>`)
+    .join("");
 }
 
 function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
@@ -637,6 +667,7 @@ async function init() {
   loadHourly();
   loadNews();
   loadFx();
+  loadAnime();
   if (window.QuakeMap) window.QuakeMap.init("quake-map");   // preload map in background
   loadRecentQuakes();
   pollQuake();
@@ -646,6 +677,7 @@ async function init() {
   setInterval(loadHourly, 15 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
   setInterval(loadFx, 30 * 60 * 1000);
+  setInterval(loadAnime, 60 * 60 * 1000);   // hourly; also refreshes the "next up" ordering
   observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)
   setInterval(pollQuake, 30 * 1000);
   setInterval(loadRecentQuakes, 3 * 60 * 1000);

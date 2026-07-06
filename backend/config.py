@@ -98,6 +98,11 @@ FX_BASE_LABEL = "元"    # short display label per currency
 FX_QUOTE_LABEL = "円"
 FX_REFRESH = 3600
 
+# --- Anime (Jikan / MyAnimeList, free, no key) ------------------------------
+# The 新番 slot shows today's TV broadcast schedule (JP titles + JST times).
+ANIME_REFRESH = 3600    # refresh hourly (also catches the midnight day-rollover)
+ANIME_COUNT = 24
+
 # --- Refresh intervals (seconds) --------------------------------------------
 WEATHER_REFRESH = 600
 NEWS_REFRESH = 300

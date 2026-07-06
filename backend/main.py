@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 import config
+from anime import fetch_anime
 from earthquake import EarthquakeService, fetch_recent_quakes
 from fx import fetch_fx
 from news import fetch_alerts, fetch_news
@@ -16,7 +17,7 @@ from weather import fetch_hourly, fetch_weather
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
 
-state = {"japan": None, "fx": None}   # 主要ニュース column + exchange rate (shared)
+state = {"japan": None, "fx": None, "anime": None}   # news + fx + anime schedule (shared)
 weather_cache = {}   # city id -> {"data": ..., "ts": ...}
 hourly_cache = {}
 ai_cache = {}        # ai source id -> {"data": [...], "ts": ...}
@@ -132,6 +133,17 @@ async def fx_loop():
         await asyncio.sleep(config.FX_REFRESH)
 
 
+async def anime_loop():
+    while True:
+        try:
+            fresh = await fetch_anime(config.ANIME_COUNT)
+            if fresh:
+                state["anime"] = fresh          # keep last good on error / empty
+        except Exception:
+            pass
+        await asyncio.sleep(config.ANIME_REFRESH)
+
+
 async def recent_quake_loop():
     # Seed the recent-quakes list from P2P history, then keep it fresh. Live WS
     # events also prepend to eq_service.recent, so this mainly covers startup/gaps.
@@ -151,6 +163,7 @@ async def lifespan(app):
         asyncio.create_task(warm_loop()),
         asyncio.create_task(news_loop()),
         asyncio.create_task(fx_loop()),
+        asyncio.create_task(anime_loop()),
         asyncio.create_task(recent_quake_loop()),
         asyncio.create_task(eq_service.run()),
     ]
@@ -206,6 +219,11 @@ async def api_news(ai: str = None):
 @app.get("/api/fx")
 async def api_fx():
     return state["fx"] or {}
+
+
+@app.get("/api/anime")
+async def api_anime():
+    return state["anime"] or []
 
 
 @app.get("/api/earthquake/current")
