@@ -104,18 +104,21 @@ function buildThresholdOptions() {
 }
 
 // ---- clock -----------------------------------------------------------------
+// Pin the clock/date/weekday to JST (Asia/Tokyo) like the rest of the app
+// (jstHour/jstDateISO); otherwise a tablet whose OS timezone is not JST would
+// show a day that disagrees with the JST anime cutoff and holiday countdown.
 function formatDateOnly() {
-  return new Intl.DateTimeFormat(locale, { month: "long", day: "numeric" }).format(new Date());
+  return new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", month: "long", day: "numeric" }).format(new Date());
 }
 function formatWeekday() {
-  return new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date());
+  return new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", weekday: "short" }).format(new Date());
 }
 
 function startClock() {
   const timeEl = document.getElementById("time");
   const tick = () => {
     timeEl.textContent = new Intl.DateTimeFormat(locale, {
-      hour: "2-digit", minute: "2-digit", hour12: false,
+      timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false,
     }).format(new Date());
     const dateEl = document.getElementById("today-date");   // date + weekday live in the today card
     if (dateEl) dateEl.textContent = formatDateOnly();
@@ -266,10 +269,11 @@ function renderHoliday(list) {
 
 // ---- anime schedule (今夜の放送) -------------------------------------------
 let lastAnime = null;
+let lastAnimeDay = null;   // JST date of the last successful fetch, to detect a midnight rollover
 async function loadAnime() {
   try {
     const list = await (await fetch("/api/anime")).json();
-    if (Array.isArray(list)) { lastAnime = list; renderAnime(list); }
+    if (Array.isArray(list)) { lastAnime = list; lastAnimeDay = jstDateISO(); renderAnime(list); }
   } catch (_) { /* keep last */ }
 }
 function jstHour() {
@@ -366,7 +370,8 @@ function observeNewsLists() {
 
 // ---- earthquake ------------------------------------------------------------
 const overlay = document.getElementById("quake-overlay");
-let quakeHideTimer = null, quakeTickTimer = null, currentQuakeKey = null;
+let quakeHideTimer = null, quakeTickTimer = null, quakeIdleTimer = null, currentQuakeKey = null;
+const MANUAL_IDLE_MS = 60 * 1000;   // auto-return a manually-opened 🗾 overlay to the dashboard if left untouched
 let lastEvent = null, manualMode = false, shownEvent = null, dismissedBase = null;
 let recentQuakes = [];   // last N 地震情報 for the 🗾 browse list
 
@@ -376,7 +381,7 @@ const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 50: "i5
 function scaleClass(s) { return SCALE_CLASS[s] || "i1"; }
 function quakeScale(ev) {
   const s = Number(ev && ev.maxScale);
-  return Number.isFinite(s) ? s : 999;   // unknown intensity → fail-safe: show it
+  return Number.isFinite(s) && s >= 0 ? s : 999;   // unknown/-1 intensity → fail-safe: show it (don't drop an early EEW)
 }
 
 function formatDepth(km) {
@@ -424,6 +429,13 @@ function showQuakeLayout(ev) {
   document.getElementById("quake-toggle").classList.add("active");
 }
 
+// Idle timer for a manually-opened overlay: return to the dashboard if untouched,
+// so a stray tap on the wall tablet doesn't hide the info screen indefinitely.
+function armManualIdle() {
+  clearTimeout(quakeIdleTimer);
+  quakeIdleTimer = setTimeout(closeQuake, MANUAL_IDLE_MS);
+}
+
 // Manual button (🗾): open the earthquake layout on demand, or close it.
 function toggleQuakeLayout() {
   if (!overlay.classList.contains("hidden")) { closeQuake(); return; }
@@ -441,6 +453,7 @@ function toggleQuakeLayout() {
     showQuakeLayout(null);            // nothing recorded yet -> empty state
     document.getElementById("quake-remaining").textContent = t("manualHint");
   }
+  armManualIdle();
 }
 
 // Build the tappable list of recent quakes (manual browse mode only).
@@ -485,6 +498,7 @@ function selectRecent(i) {
     el.classList.toggle("active", k === i));
   document.getElementById("quake-remaining").textContent =
     `${t("recentQuake")} · ${formatOrigin(ev.originTime)}`;
+  armManualIdle();   // each interaction resets the auto-close countdown
 }
 
 // Close the earthquake screen (✕ or 🗾). Dismissing a live event keeps it closed
@@ -572,6 +586,7 @@ function renderQuake(ev) {
 function scheduleHide(expiresAt) {
   clearTimeout(quakeHideTimer);
   clearInterval(quakeTickTimer);
+  clearTimeout(quakeIdleTimer);   // a live event supersedes any manual browse auto-close
   const remainingEl = document.getElementById("quake-remaining");
   const tick = () => {
     const left = Math.max(0, Math.round(expiresAt - Date.now() / 1000));
@@ -586,6 +601,7 @@ function scheduleHide(expiresAt) {
 function hideQuake() {
   clearTimeout(quakeHideTimer);
   clearInterval(quakeTickTimer);
+  clearTimeout(quakeIdleTimer);
   overlay.classList.add("hidden");
   overlay.classList.remove("is-eew");
   document.getElementById("quake-recent").classList.add("hidden");
@@ -708,7 +724,10 @@ async function init() {
   setInterval(loadFx, 30 * 60 * 1000);
   setInterval(loadHoliday, 60 * 60 * 1000);   // hourly; re-count days across midnight
   setInterval(loadAnime, 60 * 60 * 1000);   // hourly fetch
-  setInterval(() => { if (lastAnime) renderAnime(lastAnime); }, 10 * 60 * 1000);   // re-apply the 18:00 cutoff promptly
+  setInterval(() => {
+    if (lastAnimeDay && jstDateISO() !== lastAnimeDay) loadAnime();   // JST day rolled over → refetch (stale prior-day list otherwise)
+    else if (lastAnime) renderAnime(lastAnime);                       // else just re-apply the 18:00 cutoff
+  }, 10 * 60 * 1000);
   observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)
   setInterval(pollQuake, 30 * 1000);
   setInterval(loadRecentQuakes, 3 * 60 * 1000);

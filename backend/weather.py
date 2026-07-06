@@ -65,7 +65,7 @@ def _match_area(areas, code):
     for a in areas:
         if a.get("area", {}).get("code") == code:
             return a
-    return areas[0]
+    return areas[0] if areas else {}      # empty areas → no-data dict, not an IndexError
 
 
 async def fetch_weather(cfg, weekly_count=6):
@@ -85,11 +85,11 @@ def _parse(data, cfg):
     ts = short["timeSeries"]
 
     warea = _match_area(ts[0]["areas"], cfg["class10_code"])
-    code0 = (warea.get("weatherCodes") or [""])[0]
+    code0 = (warea.get("weatherCodes") or [""])[0] or ""     # element may be null
     icon0, short0 = _icon(code0)
     # JMA separates the text with full-width spaces at odd points (e.g. around
     # "まで"), which reads awkwardly. Japanese has no spaces — drop them entirely.
-    text0 = (warea.get("weathers") or [""])[0].replace("　", "").replace(" ", "").strip() or short0
+    text0 = ((warea.get("weathers") or [""])[0] or "").replace("　", "").replace(" ", "").strip() or short0
     tmax, tmin = _today_temps(ts, today)
 
     result = {

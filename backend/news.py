@@ -45,11 +45,13 @@ async def _parse_feed(client, url):
     return feedparser.parse(r.content)
 
 
-def _item(entry, feed_source):
+def _item(entry, feed_source, split_source=False):
     title = (entry.get("title") or "").strip()
     if not title:
         return None
-    clean, src = _split_source(title)
+    # only Google News titles use the ' - 媒体名' convention; splitting other feeds
+    # would amputate legitimate trailing clauses (e.g. '速報 地震発生 - 津波の心配なし')
+    clean, src = _split_source(title) if split_source else (title, "")
     return {
         "title": clean,
         "link": entry.get("link", ""),
@@ -68,8 +70,9 @@ async def fetch_news(feeds_by_category, max_per_category):
                 try:
                     parsed = await _parse_feed(client, url)
                     source = _short_source(parsed.feed.get("title", ""))
+                    is_google = "news.google." in url
                     for e in parsed.entries:
-                        it = _item(e, source)
+                        it = _item(e, source, split_source=is_google)
                         if it:
                             items.append(it)
                 except Exception:

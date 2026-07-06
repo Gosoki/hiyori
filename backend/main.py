@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from anime import fetch_anime
-from earthquake import EarthquakeService, fetch_recent_quakes
+from earthquake import EarthquakeService, fetch_recent_quakes, _quake_key
 from fx import fetch_fx
 from holiday import fetch_holidays
 from news import fetch_alerts, fetch_news
@@ -25,13 +25,16 @@ state = {"japan": None, "fx": None, "anime": None, "holiday": None}   # shared f
 weather_cache = {}   # city id -> {"data": ..., "ts": ...}
 hourly_cache = {}
 ai_cache = {}        # ai source id -> {"data": [...], "ts": ...}
+_locks = {}       # (cache-id, key) -> asyncio.Lock, collapses concurrent misses into one fetch
 clients = set()   # connected frontend WebSockets
 
 
 async def broadcast(message):
     for ws in list(clients):
         try:
-            await ws.send_json(message)
+            # bound each send so one wedged/half-open tablet can't stall the
+            # earthquake fan-out to every other screen
+            await asyncio.wait_for(ws.send_json(message), timeout=5)
         except Exception:
             clients.discard(ws)
 
@@ -60,15 +63,22 @@ def _city(cid):
 
 async def _ensure(cache, fetch_fn, cid, ttl, empty):
     """Return cached city data, (re)fetching if missing/stale; keep last on error."""
+    c = _city(cid)                       # resolve bogus/unknown ids to a known city…
+    cid = c["id"]                        # …and cache under the canonical id (bounds the cache)
     ent = cache.get(cid)
     if ent and time.time() - ent["ts"] <= ttl:
         return ent["data"]
-    try:
-        data = await fetch_fn(_city(cid))
-        cache[cid] = {"data": data, "ts": time.time()}
-        return data
-    except Exception:
-        return ent["data"] if ent else empty
+    lock = _locks.setdefault((id(cache), cid), asyncio.Lock())
+    async with lock:                     # collapse a burst of concurrent misses into one upstream fetch
+        ent = cache.get(cid)
+        if ent and time.time() - ent["ts"] <= ttl:
+            return ent["data"]
+        try:
+            data = await fetch_fn(c)
+            cache[cid] = {"data": data, "ts": time.time()}
+            return data
+        except Exception:
+            return ent["data"] if ent else empty
 
 
 async def warm_loop():
@@ -96,17 +106,23 @@ async def _fetch_ai(sid):
 async def _ensure_ai(sid):
     """Return the cached AI headlines for a source group, (re)fetching if stale;
     keep last-good on empty/error so a flaky feed never blanks the column."""
+    sid = _ai_source(sid)["id"]          # normalize → cache key is bounded to configured sources
     ent = ai_cache.get(sid)
     if ent and time.time() - ent["ts"] <= config.NEWS_REFRESH:
         return ent["data"]
-    try:
-        data = await _fetch_ai(sid)
-        if data:
-            ai_cache[sid] = {"data": data, "ts": time.time()}
-            return data
-    except Exception:
-        pass
-    return ent["data"] if ent else []
+    lock = _locks.setdefault(("ai", sid), asyncio.Lock())
+    async with lock:
+        ent = ai_cache.get(sid)
+        if ent and time.time() - ent["ts"] <= config.NEWS_REFRESH:
+            return ent["data"]
+        try:
+            data = await _fetch_ai(sid)
+            if data:
+                ai_cache[sid] = {"data": data, "ts": time.time()}
+                return data
+        except Exception:
+            pass
+        return ent["data"] if ent else []
 
 
 async def news_loop():
@@ -170,7 +186,15 @@ async def recent_quake_loop():
         try:
             recent = await fetch_recent_quakes(config.EARTHQUAKE_RECENT_COUNT)
             if recent:
-                eq_service.recent = recent
+                # merge, don't overwrite: a live WS quake not yet in the REST
+                # history (which lags) must not be dropped. Dedup by quake key
+                # (live copy wins), then keep newest-first by origin time.
+                merged = {}
+                for ev in eq_service.recent + recent:
+                    merged.setdefault(_quake_key(ev), ev)
+                eq_service.recent = sorted(
+                    merged.values(), key=lambda e: e.get("originTime") or "", reverse=True
+                )[:config.EARTHQUAKE_RECENT_COUNT]
         except Exception:
             pass
         await asyncio.sleep(180)
