@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 import config
@@ -216,7 +216,33 @@ async def lifespan(app):
         t.cancel()
 
 
-app = FastAPI(lifespan=lifespan)
+TAGS_METADATA = [
+    {"name": "meta", "description": "Boot-time defaults and the selectable city / AI-source lists the frontend reads on startup."},
+    {"name": "weather", "description": "気象庁 (JMA) today + weekly forecast and met.no hourly strip. Cached per city; keeps last-good on upstream failure."},
+    {"name": "news", "description": "主要ニュース (Google News Top, with NERV severe alerts pinned) and the switchable AI・テック column."},
+    {"name": "widgets", "description": "Bottom-bar widgets: 為替 (open.er-api), 新番 anime schedule (Jikan), and 祝日 holidays (holidays-jp)."},
+    {"name": "earthquake", "description": "P2P地震情報: the active/most-recent quakes over HTTP, plus live EEW/quake push over the `/ws` WebSocket."},
+    {"name": "demo", "description": "Sample events to preview the earthquake takeover screen (only mounted when `config.ENABLE_DEMO`)."},
+]
+
+app = FastAPI(
+    title="日和 Hiyori API",
+    version="1.0.0",
+    description=(
+        "Backend for **日和 Hiyori**, an always-on tablet information dashboard.\n\n"
+        "Aggregates weather (JMA + met.no), news (Google News Top + NERV severe alerts), "
+        "AI/tech headlines, exchange rate, anime schedule, Japanese holidays, and live "
+        "earthquake / EEW alerts — **all from free, keyless sources**. Every column keeps "
+        "its last-good data if an upstream fails, so the display never goes blank.\n\n"
+        "* The tablet frontend (SPA) is served at `/`.\n"
+        "* Live earthquakes/EEW are pushed over the WebSocket at `/ws` as "
+        "`{\"type\":\"earthquake\",\"event\":{…}}` — on connect, any still-active event is "
+        "replayed immediately. See the **earthquake** tag for the event shape.\n\n"
+        "All tunables live in `config.py`; restart the backend after editing."
+    ),
+    openapi_tags=TAGS_METADATA,
+    lifespan=lifespan,
+)
 
 
 @app.middleware("http")
@@ -228,65 +254,83 @@ async def no_store(request, call_next):
     return response
 
 
-@app.get("/api/config")
+@app.get("/api/config", tags=["meta"], summary="Boot-time defaults")
 async def api_config():
+    """The defaults the frontend boots with: UI `language`, `city`, `aiSource`, and
+    the earthquake full-screen `minScale` (each tablet may override these locally)."""
     return {"language": config.DEFAULT_LANGUAGE, "city": config.DEFAULT_CITY,
             "aiSource": config.DEFAULT_AI_SOURCE, "minScale": config.EARTHQUAKE_MIN_SCALE}
 
 
-@app.get("/api/cities")
+@app.get("/api/cities", tags=["meta"], summary="Selectable cities")
 async def api_cities():
+    """The cities offered in Settings, as `{id, name}` (configured in `config.CITIES`)."""
     return [{"id": c["id"], "name": c["city_name"]} for c in config.CITIES]
 
 
-@app.get("/api/ai-sources")
+@app.get("/api/ai-sources", tags=["meta"], summary="Selectable AI-news sources")
 async def api_ai_sources():
+    """The AI・テック source groups offered in Settings, as `{id, name, lang}`
+    (`lang` picks the column's font; configured in `config.AI_SOURCES`)."""
     return [{"id": s["id"], "name": s["name"], "lang": s.get("lang", "ja")} for s in config.AI_SOURCES]
 
 
-@app.get("/api/weather")
-async def api_weather(city: str = None):
+@app.get("/api/weather", tags=["weather"], summary="Today + weekly forecast")
+async def api_weather(city: str = Query(None, description="City id from /api/cities; omitted → DEFAULT_CITY.")):
+    """JMA today + weekly forecast for `city`. Cached for `WEATHER_REFRESH`s;
+    returns the last-good payload (or `{}` on a cold-start upstream failure)."""
     return await _ensure(weather_cache, weather_fetch, city or config.DEFAULT_CITY, config.WEATHER_REFRESH, {})
 
 
-@app.get("/api/weather/hourly")
-async def api_weather_hourly(city: str = None):
+@app.get("/api/weather/hourly", tags=["weather"], summary="Hourly forecast strip")
+async def api_weather_hourly(city: str = Query(None, description="City id from /api/cities; omitted → DEFAULT_CITY.")):
+    """met.no hourly points for `city` (`HOURLY_COUNT` points, `HOURLY_STEP`h apart)."""
     return await _ensure(hourly_cache, hourly_fetch, city or config.DEFAULT_CITY, config.HOURLY_REFRESH, [])
 
 
-@app.get("/api/news")
-async def api_news(ai: str = None):
+@app.get("/api/news", tags=["news"], summary="News columns (AI + main)")
+async def api_news(ai: str = Query(None, description="AI-source id from /api/ai-sources; omitted → DEFAULT_AI_SOURCE.")):
+    """Returns `{ai, japan}`. `ai` is the chosen AI/tech source group; `japan` is
+    Google News Top with any NERV severe alerts (`alert: true`) pinned to the front.
+    Both keep last-good so a flaky feed never blanks a column."""
     return {"ai": await _ensure_ai(ai or config.DEFAULT_AI_SOURCE),
             "japan": state["japan"] or []}
 
 
-@app.get("/api/fx")
+@app.get("/api/fx", tags=["widgets"], summary="Exchange rate")
 async def api_fx():
+    """Current `FX_BASE`↔`FX_QUOTE` rate as `{base, quote, rate, updated, baseLabel, quoteLabel}` (or `{}` before the first fetch)."""
     return state["fx"] or {}
 
 
-@app.get("/api/anime")
+@app.get("/api/anime", tags=["widgets"], summary="Today's anime schedule")
 async def api_anime():
+    """Today's TV-anime broadcast list as `[{time, title}]`, chronological; late-night
+    next-day shows use 24:00–29:59 notation (or `[]` before the first fetch)."""
     return state["anime"] or []
 
 
-@app.get("/api/holiday")
+@app.get("/api/holiday", tags=["widgets"], summary="Upcoming Japanese holidays")
 async def api_holiday():
+    """Upcoming Japanese holidays as `[{date, name}]` (the countdown itself is computed client-side)."""
     return state["holiday"] or []
 
 
-@app.get("/api/earthquake/current")
+@app.get("/api/earthquake/current", tags=["earthquake"], summary="Active earthquake event")
 async def api_earthquake():
+    """The event currently holding the takeover screen (within its `EARTHQUAKE_HOLD_SECONDS` window), else `{}`."""
     return eq_service.active() or {}
 
 
-@app.get("/api/earthquake/recent")
+@app.get("/api/earthquake/recent", tags=["earthquake"], summary="Recent quakes (browsable)")
 async def api_earthquake_recent():
+    """The last `EARTHQUAKE_RECENT_COUNT` distinct quakes (newest first) that the 🗾 button lets you browse."""
     return eq_service.recent
 
 
-@app.get("/api/earthquake/latest")
+@app.get("/api/earthquake/latest", tags=["earthquake"], summary="Most recent quake")
 async def api_earthquake_latest():
+    """The single most recent quake (or `{}` if none recorded yet)."""
     return (eq_service.recent[0] if eq_service.recent else {})
 
 
@@ -321,15 +365,17 @@ if config.ENABLE_DEMO:
         }
         return base
 
-    @app.get("/api/demo/quake")
+    @app.get("/api/demo/quake", tags=["demo"], summary="Preview a 地震情報 takeover")
     async def demo_quake():
+        """Inject a sample 地震情報 (震度5強) and push it to all screens for `EARTHQUAKE_HOLD_SECONDS`."""
         ev = _demo_event("quake")
         eq_service.current = ev
         await broadcast({"type": "earthquake", "event": ev})
         return {"ok": True}
 
-    @app.get("/api/demo/eew")
+    @app.get("/api/demo/eew", tags=["demo"], summary="Preview an EEW takeover")
     async def demo_eew():
+        """Inject a sample 緊急地震速報 (EEW, red pulse) and push it to all screens."""
         ev = _demo_event("eew")
         eq_service.current = ev
         await broadcast({"type": "earthquake", "event": ev})

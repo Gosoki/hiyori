@@ -7,8 +7,8 @@ Restart the backend after editing.
 # --- Weather cities (気象庁 JMA area codes + lat/lon for the hourly forecast) -
 # JMA weather uses area_code (forecast endpoint) + class10_code (sub-region);
 # codes from https://www.jma.go.jp/bosai/common/const/area.json . lat/lon feed
-# the met.no hourly forecast. Each device picks a city in ⚙ Settings.
-# Add a city by appending a row (id must be unique).
+# the met.no hourly forecast. Each device picks a city in Settings (tap the city
+# name in the top-left). Add a city by appending a row (id must be unique).
 CITIES = [
     {"id": "tokyo",     "city_name": "東京",   "area_code": "130000", "class10_code": "130010", "lat": 35.69, "lon": 139.69},
     {"id": "osaka",     "city_name": "大阪",   "area_code": "270000", "class10_code": "270000", "lat": 34.69, "lon": 135.50},
@@ -36,8 +36,9 @@ NEWS_JAPAN = {"mode": "ranked", "urls": [
     "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja",
 ]}
 
-# AI/テック column: each device picks one source group in Settings (⚙→AI ソース).
-# Add a group by appending a row (unique id + display name + feeds).
+# AI/テック column: each device picks one source group in Settings (→ AI ソース).
+# "lang" tags the column so Chinese/Japanese render with the right font (no Han
+# unification). Add a group by appending a row (unique id + display name + feeds).
 AI_SOURCES = [
     {"id": "cn", "name": "中文", "lang": "zh", "mode": "recent", "urls": [
         "https://www.qbitai.com/feed",           # 量子位 (AI)
@@ -52,7 +53,7 @@ AI_SOURCES = [
 ]
 DEFAULT_AI_SOURCE = "cn"   # id from AI_SOURCES; each device can override in Settings
 
-NEWS_MAX_PER_CATEGORY = 12
+NEWS_MAX_PER_CATEGORY = 12   # max headlines kept per column (alerts + Google News share this cap)
 
 # --- Severe real-time alerts (特務機関NERV / @UN_NERV; aggregates JMA + Jアラート) -
 # NERV also posts every prefecture's routine advisory, so we keep only titles that
@@ -68,12 +69,13 @@ EARTHQUAKE_HOLD_SECONDS = 90    # keep the earthquake screen for 90 seconds
 EARTHQUAKE_SHOW_TEST = False    # show EEW drill (訓練) messages as full-screen?
 EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets you browse
 # Default full-screen 震度 threshold for a new device (each device can change it in
-# ⚙ Settings; smaller quakes stay in the 🗾 list without a full-screen alert).
+# Settings; smaller quakes stay in the 🗾 list without a full-screen alert).
 # Codes: 10=1 20=2 30=3 40=4 45=5弱 50=5強 55=6弱 60=6強 70=7 . Default 30 (震度3+).
+# An EEW whose predicted intensity is still unknown (-1) full-screens regardless.
 EARTHQUAKE_MIN_SCALE = 30
 
 # --- UI ---------------------------------------------------------------------
-DEFAULT_LANGUAGE = "ja"   # ja / zh / en. Each device can override in Settings.
+DEFAULT_LANGUAGE = "ja"   # ja / zh / en (UI chrome only; content stays in its source language). Each device can override.
 
 # --- Demo -------------------------------------------------------------------
 # When True, /api/demo/quake and /api/demo/eew inject a sample event so you can
@@ -89,9 +91,9 @@ HOURLY_STEP = 2         # hours between points (2 → 12 points cover a full day
 WEEKLY_COUNT = 6    # days shown in the weekly strip (fixed; JMA gives 6–7 → capped)
 
 # --- Exchange rate (open.er-api.com, free, no key; ~daily rates) -------------
-# The bottom widget shows both directions: 1 FX_BASE = x FX_QUOTE and 1 FX_QUOTE
-# = x FX_BASE. When x would round below 1, the base amount is padded (×10) so the
-# shown number is always a whole number (e.g. 100 円 = 4 元).
+# The bottom widget shows both directions with decimals: "1 元 = 23.802 円" and
+# "1 円 = … 元". When a side's integer part would be < 1, BOTH amounts scale ×10
+# until it isn't (e.g. "1 円 = 0.042 元" → "100 円 = 4.201 元").
 FX_BASE = "CNY"
 FX_QUOTE = "JPY"
 FX_BASE_LABEL = "元"    # short display label per currency
@@ -102,7 +104,7 @@ FX_REFRESH = 3600
 # The 新番 slot shows the broadcast day (00:00 today → 05:59 tomorrow) in time order.
 # Refreshed every 6h, aligned to 00/06/12/18 JST so the day rolls over at midnight.
 ANIME_REFRESH = 21600   # 6 hours
-ANIME_COUNT = 24
+ANIME_COUNT = 24        # max shows fetched (the panel then lays out up to 9 in a 3-col grid)
 
 # --- Japanese holidays (holidays-jp, free, no key) --------------------------
 # The 為替 slot's 3rd line counts down to the next holiday. The day count itself

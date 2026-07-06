@@ -105,6 +105,54 @@ chrome.exe --kiosk --app=http://<linux机器IP>:8000 --incognito --noerrdialogs 
 
 ---
 
+## 5. API 接口与文档
+
+后端是 FastAPI,自带**交互式接口文档**(数据源全免费无 key,接口也无鉴权):
+
+- **Swagger UI** → `http://<IP>:8000/docs` （可直接点 “Try it out” 调用）
+- **ReDoc** → `http://<IP>:8000/redoc`
+- **OpenAPI JSON** → `http://<IP>:8000/openapi.json`
+
+> 这几个页面供**运维/开发**在有网的机器上查看;平板前端本身零外部依赖(严格 CSP),不受影响。
+
+### HTTP 接口一览
+
+| 方法 · 路径 | 说明 |
+|---|---|
+| `GET /api/config` | 前端启动默认值:语言 / 城市 / AI 源 / 地震全屏阈值 |
+| `GET /api/cities` | 可选城市列表 `[{id,name}]` |
+| `GET /api/ai-sources` | 可选 AI 源分组 `[{id,name,lang}]` |
+| `GET /api/weather?city=` | 今日+周间预报(JMA);省略 `city` 用默认城市 |
+| `GET /api/weather/hourly?city=` | 逐时预报条(met.no) |
+| `GET /api/news?ai=` | `{ai, japan}`:AI 栏(按 `ai=` 选源)+ 主要新闻(Google News,NERV 警报置顶 `alert:true`) |
+| `GET /api/fx` | 汇率 `{base,quote,rate,updated,baseLabel,quoteLabel}` |
+| `GET /api/anime` | 今日新番 `[{time,title}]`(次日凌晨用 24:00–29:59) |
+| `GET /api/holiday` | 未来日本节日 `[{date,name}]` |
+| `GET /api/earthquake/current` | 当前占屏中的地震事件(否则 `{}`) |
+| `GET /api/earthquake/recent` | 最近 N 次地震(新→旧,供 🗾 浏览) |
+| `GET /api/earthquake/latest` | 最新一次地震 |
+| `GET /api/demo/quake` · `GET /api/demo/eew` | 注入样例事件预览地震屏(仅 `ENABLE_DEMO=True` 时挂载) |
+
+所有数据接口在上游抓取失败时保留上一份好数据(`last-good`),永不返回空白栏。
+
+### WebSocket 实时地震推送
+
+```
+ws://<IP>:8000/ws
+```
+
+连接后:若当前有仍在保持期内的地震,立即补推一次;之后每来一次地震/EEW 推送一条:
+
+```json
+{ "type": "earthquake", "event": { "kind": "eew|quake", "maxScale": 50,
+  "hypocenter": {"name":"…","depth":…,"magnitude":…}, "regions": […],
+  "expiresAt": 1780000000, "cancelled": false, "…": "…" } }
+```
+
+`kind` 为 `eew`(緊急地震速報,红色脉冲)或 `quake`(地震情報)。前端据此切换全屏地震布局;`maxScale` 低于本机阈值则只进 🗾 列表(`maxScale=-1` 未知强度时按“宁可误报”仍全屏)。字段结构见 `backend/earthquake.py` 的 `normalize_quake` / `normalize_eew`。
+
+---
+
 ## 结构
 
 ```
