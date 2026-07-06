@@ -1,9 +1,12 @@
 """FastAPI backend: aggregates weather + news, pushes earthquake alerts, serves the frontend."""
 import asyncio
+import datetime
 import functools
 import os
 import time
 from contextlib import asynccontextmanager
+
+JST = datetime.timezone(datetime.timedelta(hours=9))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -141,7 +144,11 @@ async def anime_loop():
                 state["anime"] = fresh          # keep last good on error / empty
         except Exception:
             pass
-        await asyncio.sleep(config.ANIME_REFRESH)
+        # sleep to the next ANIME_REFRESH boundary in JST (00/06/12/18) so the
+        # broadcast day rolls right at midnight rather than drifting.
+        now = datetime.datetime.now(JST)
+        sod = now.hour * 3600 + now.minute * 60 + now.second
+        await asyncio.sleep(max(60, config.ANIME_REFRESH - (sod % config.ANIME_REFRESH)))
 
 
 async def recent_quake_loop():

@@ -245,23 +245,20 @@ async function loadAnime() {
     if (Array.isArray(list)) { lastAnime = list; renderAnime(list); }
   } catch (_) { /* keep last */ }
 }
-function nowHHMM() {   // current time in JST as "HH:MM"
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(new Date());
+function jstHour() {
+  return Number(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tokyo", hour: "2-digit", hour12: false,
+  }).format(new Date()));
 }
 function renderAnime(list) {
   const body = document.getElementById("anime-body");
   if (!body) return;
-  if (!Array.isArray(list) || !list.length) {
-    body.innerHTML = `<span class="slot-dim">${t("comingSoon")}</span>`;
-    return;
-  }
-  const now = nowHHMM();                       // rotate so the next-to-air shows come first
-  let start = list.findIndex((a) => a.time >= now);
-  if (start < 0) start = 0;
-  const ordered = list.slice(start).concat(list.slice(0, start)).slice(0, 9);   // 3×3 grid
-  body.innerHTML = ordered
+  let items = Array.isArray(list) ? list : [];
+  // From 18:00 on, drop shows that already aired earlier today (before 18:00);
+  // 18:00–23:59 today plus next-day late-night (24:00+) stay.
+  if (jstHour() >= 18) items = items.filter((a) => a.time >= "18:00");
+  if (!items.length) { body.innerHTML = `<span class="slot-dim">${t("comingSoon")}</span>`; return; }
+  body.innerHTML = items.slice(0, 9)            // chronological (backend already sorted); 3×3 grid
     .map((a) => `<div class="a-cell"><span class="a-t">${escapeHtml(a.time)}</span> ${escapeHtml(a.title)}</div>`)
     .join("");
 }
@@ -677,7 +674,8 @@ async function init() {
   setInterval(loadHourly, 15 * 60 * 1000);
   setInterval(loadNews, 5 * 60 * 1000);
   setInterval(loadFx, 30 * 60 * 1000);
-  setInterval(loadAnime, 60 * 60 * 1000);   // hourly; also refreshes the "next up" ordering
+  setInterval(loadAnime, 60 * 60 * 1000);   // hourly fetch
+  setInterval(() => { if (lastAnime) renderAnime(lastAnime); }, 10 * 60 * 1000);   // re-apply the 18:00 cutoff promptly
   observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)
   setInterval(pollQuake, 30 * 1000);
   setInterval(loadRecentQuakes, 3 * 60 * 1000);
