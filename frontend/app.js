@@ -325,7 +325,7 @@ function fillNewsList(id, items, contentLang) {
   items.forEach((it) => {
     const li = document.createElement("li");
     if (it.alert) { li.className = "n-alert"; li.lang = "ja"; }   // NERV alerts are Japanese
-    const dot = document.createElement("span"); dot.className = "n-dot"; dot.textContent = it.alert ? "⚠️" : "•";
+    const dot = document.createElement("span"); dot.className = "n-dot"; dot.textContent = it.alert ? "⚠️" : "";   // normal = CSS-drawn circle (font-independent size)
     const title = document.createElement("span"); title.className = "n-title"; title.textContent = it.title;
     li.appendChild(dot); li.appendChild(title);
     if (it.source) {

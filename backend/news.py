@@ -96,17 +96,35 @@ async def fetch_alerts(feed_url, keywords, max_n):
     except Exception:
         return []
     out = []
+    seen = set()
     for e in parsed.entries:                       # NERV RSS is newest-first
         title = (e.get("title") or "").strip()
         title = re.sub(r"^UN_NERV:\s*", "", title).strip().strip('“”"').strip()
-        if title and any(k in title for k in keywords):
-            out.append({
-                "title": title[:80],
-                "link": e.get("link", ""),
-                "source": "NERV",
-                "ts": _timestamp(e),
-                "alert": True,
-            })
-            if len(out) >= max_n:
-                break
+        if not (title and any(k in title for k in keywords)):
+            continue
+        # NERV truncates the <title> to just "【…】…"; the toot body carries the
+        # real detail (発生時刻・震源地・深さ・規模・最大震度) — use it as the headline.
+        body = e.get("summary") or e.get("description") or ""
+        body = re.sub(r"<[^>]+>", " ", body)                       # strip HTML tags
+        body = re.sub(r"(?:\s*[#＃]\s*[^\s#＃]+)+\s*$", "", body)     # drop trailing hashtags
+        body = re.sub(r"\s+", " ", body).strip()
+        headline = body or title
+        # trim the 【…】 header to just the alert type (drop the report no. + date)
+        headline = re.sub(r"^【([^】\s]+)[^】]*】", r"【\1】", headline)
+        # collapse repeat bulletins of one quake (第3報/第6報/最終報 → keep the newest)
+        tm = re.search(r"\d+時\d+分", headline)
+        ep = re.search(r"([^、。\s]{2,}?)を震源", headline)
+        key = (tm.group(0) if tm else headline[:16], ep.group(1) if ep else "")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "title": headline[:140],
+            "link": e.get("link", ""),
+            "source": "NERV",
+            "ts": _timestamp(e),
+            "alert": True,
+        })
+        if len(out) >= max_n:
+            break
     return out
