@@ -197,7 +197,9 @@ async def recent_quake_loop():
                 )[:config.EARTHQUAKE_RECENT_COUNT]
         except Exception:
             pass
-        await asyncio.sleep(180)
+        # live WS events keep the list current in real time; this poll only seeds
+        # startup and heals rare WS gaps, so 30 min is plenty (polite to P2P's free API)
+        await asyncio.sleep(1800)
 
 
 @asynccontextmanager
@@ -335,8 +337,6 @@ async def api_earthquake_latest():
 
 
 if config.ENABLE_DEMO:
-    import time
-
     def _demo_event(kind):
         base = {
             "kind": kind,

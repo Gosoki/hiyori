@@ -24,7 +24,6 @@
   --fs-md: clamp(15px, 2.3vmin, 30px);
   --fs-lg: clamp(19px, 3vmin, 42px);
   --fs-xl: clamp(26px, 4.6vmin, 68px);
-  --fs-xxl: clamp(40px, 9vmin, 130px);
   --gap: clamp(4px, 0.9vmin, 14px);
   --radius: clamp(8px, 1.4vmin, 16px);
 }
@@ -303,7 +302,6 @@ html, body {
   --eq-left: clamp(8px, 1.6vmin, 22px);      /* inset from the left edge */
   --eq-bottom: clamp(10px, 2vmin, 28px);     /* inset from the bottom edge */
   --eq-w: clamp(280px, 34%, 560px);          /* recent list width = 地震情報 panel width */
-  --eq-gap: clamp(8px, 1.4vmin, 16px);
   --eq-oki: clamp(224px, 35vmin, 448px);     /* Okinawa square side (vmin → width == height) */
 }
 .hidden { display: none !important; }

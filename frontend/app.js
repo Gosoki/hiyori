@@ -18,6 +18,7 @@ function t(key) {
 
 function applyI18n() {
   locale = t("_locale");
+  clockFmt = null;   // locale changed → rebuild the clock/date formatters
   document.documentElement.lang = lang;
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     el.textContent = t(el.dataset.i18n);
@@ -107,23 +108,39 @@ function buildThresholdOptions() {
 // Pin the clock/date/weekday to JST (Asia/Tokyo) like the rest of the app
 // (jstHour/jstDateISO); otherwise a tablet whose OS timezone is not JST would
 // show a day that disagrees with the JST anime cutoff and holiday countdown.
+// Formatters are built once per locale (rebuilt by applyI18n via clockFmt=null),
+// and DOM writes are skipped while the displayed strings haven't changed.
+let clockFmt = null;
 function formatDateOnly() {
-  return new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", month: "long", day: "numeric" }).format(new Date());
+  if (!clockFmt) buildClockFormatters();
+  return clockFmt.date.format(new Date());
 }
 function formatWeekday() {
-  return new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", weekday: "short" }).format(new Date());
+  if (!clockFmt) buildClockFormatters();
+  return clockFmt.wd.format(new Date());
+}
+function buildClockFormatters() {
+  clockFmt = {
+    time: new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false }),
+    date: new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", month: "long", day: "numeric" }),
+    wd: new Intl.DateTimeFormat(locale, { timeZone: "Asia/Tokyo", weekday: "short" }),
+  };
 }
 
 function startClock() {
   const timeEl = document.getElementById("time");
+  let shown = "";
   const tick = () => {
-    timeEl.textContent = new Intl.DateTimeFormat(locale, {
-      timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false,
-    }).format(new Date());
+    if (!clockFmt) buildClockFormatters();
+    const now = new Date();
+    const s = clockFmt.time.format(now);
+    if (s === shown) return;            // minute unchanged → no DOM work
+    shown = s;
+    timeEl.textContent = s;
     const dateEl = document.getElementById("today-date");   // date + weekday live in the today card
-    if (dateEl) dateEl.textContent = formatDateOnly();
+    if (dateEl) dateEl.textContent = clockFmt.date.format(now);
     const wdEl = document.getElementById("today-wd");
-    if (wdEl) wdEl.textContent = formatWeekday();
+    if (wdEl) wdEl.textContent = clockFmt.wd.format(now);
   };
   tick();
   setInterval(tick, 5000);
@@ -217,11 +234,10 @@ function renderHourly(list) {
 }
 
 // ---- exchange rate ---------------------------------------------------------
-let lastFx = null;
 async function loadFx() {
   try {
     const fx = await (await fetch("/api/fx")).json();
-    if (fx && fx.rate) { lastFx = fx; renderFx(fx); }
+    if (fx && fx.rate) renderFx(fx);
   } catch (_) { /* keep last */ }
 }
 function fxFmt(v) { return v.toFixed(3).replace(/\.?0+$/, ""); }   // 3 decimals, trim trailing zeros
@@ -312,10 +328,13 @@ function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
 }
 
 // ---- news ------------------------------------------------------------------
+let lastNewsText = "";   // raw response of the last render — skip DOM churn when unchanged
 async function loadNews() {
   try {
-    const data = await (await fetch("/api/news?ai=" + encodeURIComponent(aiSrc || ""))).json();
-    if (data) { lastNews = data; renderNews(data); }
+    const txt = await (await fetch("/api/news?ai=" + encodeURIComponent(aiSrc || ""))).text();
+    if (!txt || txt === lastNewsText) return;   // headlines unchanged → no re-render
+    const data = JSON.parse(txt);
+    if (data) { lastNewsText = txt; lastNews = data; renderNews(data); }
   } catch (_) { /* keep last */ }
 }
 
@@ -375,7 +394,7 @@ function observeNewsLists() {
 const overlay = document.getElementById("quake-overlay");
 let quakeHideTimer = null, quakeTickTimer = null, quakeIdleTimer = null, currentQuakeKey = null;
 const MANUAL_IDLE_MS = 60 * 1000;   // auto-return a manually-opened 🗾 overlay to the dashboard if left untouched
-let lastEvent = null, manualMode = false, shownEvent = null, dismissedBase = null;
+let manualMode = false, shownEvent = null, dismissedBase = null;
 let recentQuakes = [];   // last N 地震情報 for the 🗾 browse list
 
 const eventBase = (ev) => ev.kind + ":" + ev.id;
@@ -409,7 +428,6 @@ function formatOrigin(s) {
 function handleQuake(ev) {
   if (!ev || !ev.kind) return;
   if (ev.cancelled) { hideQuake(); return; }
-  lastEvent = ev;                                  // always remember the newest
   if (ev.kind === "quake") {                       // keep the browse list fresh
     const key = ev.originTime || ev.id;
     recentQuakes = [ev, ...recentQuakes.filter((e) => (e.originTime || e.id) !== key)].slice(0, 5);
@@ -446,6 +464,7 @@ function toggleQuakeLayout() {
   manualMode = true;
   clearTimeout(quakeHideTimer);
   clearInterval(quakeTickTimer);
+  loadRecentQuakes();                 // on-demand refresh so the browse list is current when opened
   const recentEl = document.getElementById("quake-recent");
   if (recentQuakes.length) {
     renderRecentList();
@@ -513,7 +532,6 @@ function closeQuake() {
 
 function renderEmptyQuake() {
   const banner = document.getElementById("quake-banner");
-  banner.style.display = "";
   banner.className = "quake-banner i1";
   document.getElementById("quake-title").textContent = t("quakeInfo");
   document.getElementById("quake-sub").textContent = "";
@@ -536,7 +554,6 @@ function renderEmptyQuake() {
 function renderQuake(ev) {
   const isEew = ev.kind === "eew";
   const banner = document.getElementById("quake-banner");
-  banner.style.display = "";
   banner.className = "quake-banner " + scaleClass(ev.maxScale > 0 ? ev.maxScale : (isEew ? 55 : 20));
   document.getElementById("quake-title").textContent = isEew ? t("eew") : t("quakeInfo");
   document.getElementById("quake-sub").textContent = isEew ? t("eewSub") : (ev.issueLabel || "");
@@ -618,10 +635,7 @@ function hideQuake() {
 async function loadRecentQuakes() {
   try {
     const list = await (await fetch("/api/earthquake/recent")).json();
-    if (Array.isArray(list) && list.length) {
-      recentQuakes = list;
-      lastEvent = list[0];
-    }
+    if (Array.isArray(list) && list.length) recentQuakes = list;
   } catch (_) { /* ignore */ }
 }
 
@@ -636,9 +650,14 @@ async function pollQuake() {
 }
 
 // ---- WebSocket -------------------------------------------------------------
+let wsWasConnected = false;
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {
+    if (wsWasConnected) loadRecentQuakes();   // refresh the browse list after an outage gap
+    wsWasConnected = true;
+  };
   ws.onmessage = (e) => {
     try {
       const m = JSON.parse(e.data);
@@ -722,9 +741,9 @@ async function init() {
   connectWS();
 
   setInterval(loadWeather, 10 * 60 * 1000);
-  setInterval(loadHourly, 15 * 60 * 1000);
+  setInterval(loadHourly, 30 * 60 * 1000);   // matches the backend's 30-min hourly cache
   setInterval(loadNews, 5 * 60 * 1000);
-  setInterval(loadFx, 30 * 60 * 1000);
+  setInterval(loadFx, 60 * 60 * 1000);       // upstream rates only change ~daily
   setInterval(loadHoliday, 60 * 60 * 1000);   // hourly; re-count days across midnight
   setInterval(loadAnime, 60 * 60 * 1000);   // hourly fetch
   setInterval(() => {
@@ -732,8 +751,8 @@ async function init() {
     else if (lastAnime) renderAnime(lastAnime);                       // else just re-apply the 18:00 cutoff
   }, 10 * 60 * 1000);
   observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)
-  setInterval(pollQuake, 30 * 1000);
-  setInterval(loadRecentQuakes, 3 * 60 * 1000);
+  setInterval(pollQuake, 60 * 1000);            // WS delivers instantly; this is only the fallback (90s hold still caught)
+  setInterval(loadRecentQuakes, 15 * 60 * 1000); // WS keeps the list live; 🗾 open + WS-reconnect also refresh it
 }
 
 init();

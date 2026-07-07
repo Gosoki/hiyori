@@ -98,7 +98,7 @@ FX_BASE = "CNY"
 FX_QUOTE = "JPY"
 FX_BASE_LABEL = "元"    # short display label per currency
 FX_QUOTE_LABEL = "円"
-FX_REFRESH = 3600
+FX_REFRESH = 21600   # 6h; open.er-api free rates only update ~once a day
 
 # --- Anime (Jikan / MyAnimeList, free, no key) ------------------------------
 # The 新番 slot shows the broadcast day (00:00 today → 05:59 tomorrow) in time order.
