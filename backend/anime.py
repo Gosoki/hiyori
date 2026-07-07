@@ -18,11 +18,13 @@ async def _day(client, weekday_idx):
     """[(time 'HH:MM', title)] for one weekday. `filter=<day>`; do NOT add limit."""
     r = await client.get(JIKAN, params={"filter": DAYS[weekday_idx]})
     r.raise_for_status()
-    out = []
+    out, seen = [], set()
     for a in (r.json().get("data") or []):
         t = ((a.get("broadcast") or {}).get("time") or "").strip()
         title = (a.get("title_japanese") or a.get("title") or "").strip()
-        if t and title:
+        key = a.get("mal_id") or (t, title)
+        if t and title and key not in seen:   # Jikan sometimes lists the same anime twice
+            seen.add(key)
             out.append((t, title))
     return out
 

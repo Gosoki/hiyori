@@ -254,6 +254,9 @@ function jstDateISO() {   // today's date in JST as "YYYY-MM-DD"
   }).format(new Date());
 }
 function renderHoliday(list) {
+  // English: hide just the 祝日/Holiday title label; the countdown line still shows.
+  const titleEl = document.querySelector("#holiday-cell .slot-title");
+  if (titleEl) titleEl.style.display = lang === "en" ? "none" : "";
   const el = document.getElementById("holiday-line");
   if (!el) return;
   const today = jstDateISO();
