@@ -20,6 +20,7 @@ function applyI18n() {
   locale = t("_locale");
   clockFmt = null;   // locale changed → rebuild the clock/date formatters
   document.documentElement.lang = lang;
+  document.title = t("docTitle");   // browser tab / bookmark title, in the current language
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     el.textContent = t(el.dataset.i18n);
   });

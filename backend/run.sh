@@ -2,4 +2,4 @@
 # Start the dashboard backend. Serves the frontend + API + WebSocket on :8000.
 set -e
 cd "$(dirname "$0")"
-exec uvicorn main:app --host 0.0.0.0 --port 8000
+exec uvicorn main:app --host 0.0.0.0 --port 8100

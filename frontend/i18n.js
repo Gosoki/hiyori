@@ -5,6 +5,7 @@ window.I18N = {
   ja: {
     _label: "日本語",
     _locale: "ja-JP",
+    docTitle: "Hiyori — 天気・ニュース・地震",
     newsAI: "AI・テクノロジー",
     newsJapan: "主要ニュース",
     fxTitle: "為替",
@@ -52,6 +53,7 @@ window.I18N = {
   zh: {
     _label: "中文",
     _locale: "zh-CN",
+    docTitle: "Hiyori — 天气 · 新闻 · 地震",
     newsAI: "AI・科技",
     newsJapan: "重要新闻",
     fxTitle: "汇率",
@@ -99,6 +101,7 @@ window.I18N = {
   en: {
     _label: "English",
     _locale: "en-US",
+    docTitle: "Hiyori — Weather · News · Quakes",
     newsAI: "AI & Tech",
     newsJapan: "Top Stories",
     fxTitle: "FX",
