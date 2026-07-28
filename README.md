@@ -24,14 +24,22 @@
 
 ## 1. 后端部署（Linux 内网机器）
 
+**一键部署**（Debian/Ubuntu，root；装 uv+Python+依赖、注册 systemd 服务并启动）：
+
+```bash
+bash deploy.sh    # 幂等，升级时 git pull 后重跑即可；会询问端口(回车=12345)，PORT=xxxx 预设可跳过询问
+```
+
+或手动：
+
 ```bash
 cd hiyori/backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-./run.sh                    # 或: uvicorn main:app --host 0.0.0.0 --port 8000
+./run.sh                    # 或: uvicorn main:app --host 0.0.0.0 --port 12345
 ```
 
-打开 `http://<linux机器IP>:8000` 就能看到界面。记下这个 IP。
+打开 `http://<linux机器IP>:12345` 就能看到界面。记下这个 IP。
 
 ### 开机自启（systemd，可选）
 
@@ -44,7 +52,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=/path/to/hiyori/backend
-ExecStart=/path/to/hiyori/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+ExecStart=/path/to/hiyori/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 12345
 Restart=always
 User=youruser
 
@@ -63,7 +71,7 @@ sudo systemctl enable --now hiyori
 用 Chrome 或 Edge 全屏打开后端地址即可。新建一个快捷方式，目标填：
 
 ```
-chrome.exe --kiosk --app=http://<linux机器IP>:8000 --incognito --noerrdialogs --disable-pinch --overscroll-history-navigation=0
+chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs --disable-pinch --overscroll-history-navigation=0
 ```
 
 （Edge 把 `chrome.exe` 换成 `msedge.exe`，其余相同。）
@@ -79,8 +87,8 @@ chrome.exe --kiosk --app=http://<linux机器IP>:8000 --incognito --noerrdialogs 
 
 `config.py` 里 `ENABLE_DEMO = True` 时，浏览器访问：
 
-- `http://<IP>:8000/api/demo/quake` → 模拟一次「地震情報」全屏
-- `http://<IP>:8000/api/demo/eew`   → 模拟一次「緊急地震速報」全屏（红色脉冲）
+- `http://<IP>:12345/api/demo/quake` → 模拟一次「地震情報」全屏
+- `http://<IP>:12345/api/demo/eew`   → 模拟一次「緊急地震速報」全屏（红色脉冲）
 
 90 秒后自动消失。上线后可把 `ENABLE_DEMO` 设为 `False`。
 
@@ -109,9 +117,9 @@ chrome.exe --kiosk --app=http://<linux机器IP>:8000 --incognito --noerrdialogs 
 
 后端是 FastAPI,自带**交互式接口文档**(数据源全免费无 key,接口也无鉴权):
 
-- **Swagger UI** → `http://<IP>:8000/docs` （可直接点 “Try it out” 调用）
-- **ReDoc** → `http://<IP>:8000/redoc`
-- **OpenAPI JSON** → `http://<IP>:8000/openapi.json`
+- **Swagger UI** → `http://<IP>:12345/docs` （可直接点 “Try it out” 调用）
+- **ReDoc** → `http://<IP>:12345/redoc`
+- **OpenAPI JSON** → `http://<IP>:12345/openapi.json`
 
 > 这几个页面供**运维/开发**在有网的机器上查看;平板前端本身零外部依赖(严格 CSP),不受影响。
 
@@ -138,7 +146,7 @@ chrome.exe --kiosk --app=http://<linux机器IP>:8000 --incognito --noerrdialogs 
 ### WebSocket 实时地震推送
 
 ```
-ws://<IP>:8000/ws
+ws://<IP>:12345/ws
 ```
 
 连接后:若当前有仍在保持期内的地震,立即补推一次;之后每来一次地震/EEW 推送一条:
