@@ -155,12 +155,19 @@ async def fx_loop():
 
 async def anime_loop():
     while True:
+        ok = False
         try:
             fresh = await fetch_anime(config.ANIME_COUNT)
             if fresh:
                 state["anime"] = fresh          # keep last good on error / empty
+                ok = True
         except Exception:
             pass
+        if not ok:
+            # Jikan blipped (it 504s now and then). Waiting for the next 6h
+            # boundary would leave the widget empty/stale for hours — retry soon.
+            await asyncio.sleep(600)
+            continue
         # sleep to the next ANIME_REFRESH boundary in JST (00/06/12/18) so the
         # broadcast day rolls right at midnight rather than drifting.
         now = datetime.datetime.now(JST)

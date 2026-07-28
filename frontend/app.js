@@ -293,7 +293,9 @@ let lastAnimeDay = null;   // JST date of the last successful fetch, to detect a
 async function loadAnime() {
   try {
     const list = await (await fetch("/api/anime")).json();
-    if (Array.isArray(list)) { lastAnime = list; lastAnimeDay = jstDateISO(); renderAnime(list); }
+    // non-empty only: an empty list just means the backend hasn't recovered from a
+    // Jikan outage yet — don't wipe a list we're already showing
+    if (Array.isArray(list) && list.length) { lastAnime = list; lastAnimeDay = jstDateISO(); renderAnime(list); }
   } catch (_) { /* keep last */ }
 }
 function jstHour() {
@@ -748,8 +750,9 @@ async function init() {
   setInterval(loadHoliday, 60 * 60 * 1000);   // hourly; re-count days across midnight
   setInterval(loadAnime, 60 * 60 * 1000);   // hourly fetch
   setInterval(() => {
-    if (lastAnimeDay && jstDateISO() !== lastAnimeDay) loadAnime();   // JST day rolled over → refetch (stale prior-day list otherwise)
-    else if (lastAnime) renderAnime(lastAnime);                       // else just re-apply the 18:00 cutoff
+    if (!lastAnime || !lastAnime.length ||                            // still empty (Jikan outage) → retry soon
+        (lastAnimeDay && jstDateISO() !== lastAnimeDay)) loadAnime(); // JST day rolled over → refetch
+    else renderAnime(lastAnime);                                      // else just re-apply the 18:00 cutoff
   }, 10 * 60 * 1000);
   observeNewsLists();   // re-fit whenever a news list's height changes (weather render, orientation…)
   setInterval(pollQuake, 60 * 1000);            // WS delivers instantly; this is only the fallback (90s hold still caught)
