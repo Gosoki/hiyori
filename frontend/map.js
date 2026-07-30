@@ -8,7 +8,7 @@
 (function () {
   "use strict";
   const NS = "http://www.w3.org/2000/svg";
-  const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 50: "i5s", 55: "i6w", 60: "i6s", 70: "i7" };
+  const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 46: "i5w", 50: "i5s", 55: "i6w", 60: "i6s", 70: "i7" };
   // Southwest island chain (Okinawa + Amami + Tokara, south of ~30°N and west of
   // ~132°E) -> Okinawa inset. Far-southeast remote islets (小笠原 etc.) are dropped
   // so the main map compacts to Kyushu〜Hokkaido and fills the frame.
@@ -117,6 +117,9 @@
       path.setAttribute("class", "pref");
       svg.appendChild(path);
       paths[f.properties.nam_ja] = path;
+      // P2P EEW pref names come WITHOUT the 県/府/都 suffix (e.g. 岩手, 大阪) while
+      // the geojson uses 岩手県/大阪府 — register a stripped alias so EEW coloring works
+      paths[f.properties.nam_ja.replace(/[県府都]$/, "")] = path;
     });
 
     svg.appendChild(makeEpi(W));
@@ -165,11 +168,17 @@
     if (!ready) { pending = { regions, hypo }; return; }
     for (const k in mainPaths) mainPaths[k].setAttribute("class", "pref");
     for (const k in insetPaths) insetPaths[k].setAttribute("class", "pref");
+    // JMA's EEW forecast regions split Hokkaido into 北海道道央/道南/道北/道東 while
+    // the geojson has a single 北海道 — fall back to it. Regions arrive sorted by
+    // scale desc, so first-wins keeps the strongest color when several collapse.
+    const painted = new Set();
     (regions || []).forEach((r) => {
       if (r.scale > 0) {
         const cls = "pref " + (SCALE_CLASS[r.scale] || "i1");
-        if (mainPaths[r.name]) mainPaths[r.name].setAttribute("class", cls);
-        if (insetPaths[r.name]) insetPaths[r.name].setAttribute("class", cls);
+        [mainPaths, insetPaths].forEach((paths) => {
+          const p = paths[r.name] || (r.name.startsWith("北海道") ? paths["北海道"] : null);
+          if (p && !painted.has(p)) { p.setAttribute("class", cls); painted.add(p); }
+        });
       }
     });
 

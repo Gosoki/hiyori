@@ -61,6 +61,10 @@ def _city(cid):
     return config.CITIES[0]
 
 
+_fail_ts = {}        # lock key -> last failed-attempt time; short cooldown so an
+FAIL_COOLDOWN = 30   # upstream outage can't be turned into a request hammer by clients
+
+
 async def _ensure(cache, fetch_fn, cid, ttl, empty):
     """Return cached city data, (re)fetching if missing/stale; keep last on error."""
     c = _city(cid)                       # resolve bogus/unknown ids to a known city…
@@ -68,16 +72,20 @@ async def _ensure(cache, fetch_fn, cid, ttl, empty):
     ent = cache.get(cid)
     if ent and time.time() - ent["ts"] <= ttl:
         return ent["data"]
-    lock = _locks.setdefault((id(cache), cid), asyncio.Lock())
+    key = (id(cache), cid)
+    lock = _locks.setdefault(key, asyncio.Lock())
     async with lock:                     # collapse a burst of concurrent misses into one upstream fetch
         ent = cache.get(cid)
         if ent and time.time() - ent["ts"] <= ttl:
             return ent["data"]
+        if time.time() - _fail_ts.get(key, 0) < FAIL_COOLDOWN:
+            return ent["data"] if ent else empty   # just failed; don't re-hit a sick upstream yet
         try:
             data = await fetch_fn(c)
             cache[cid] = {"data": data, "ts": time.time()}
             return data
         except Exception:
+            _fail_ts[key] = time.time()
             return ent["data"] if ent else empty
 
 
@@ -110,11 +118,14 @@ async def _ensure_ai(sid):
     ent = ai_cache.get(sid)
     if ent and time.time() - ent["ts"] <= config.NEWS_REFRESH:
         return ent["data"]
-    lock = _locks.setdefault(("ai", sid), asyncio.Lock())
+    key = ("ai", sid)
+    lock = _locks.setdefault(key, asyncio.Lock())
     async with lock:
         ent = ai_cache.get(sid)
         if ent and time.time() - ent["ts"] <= config.NEWS_REFRESH:
             return ent["data"]
+        if time.time() - _fail_ts.get(key, 0) < FAIL_COOLDOWN:
+            return ent["data"] if ent else []
         try:
             data = await _fetch_ai(sid)
             if data:
@@ -122,6 +133,7 @@ async def _ensure_ai(sid):
                 return data
         except Exception:
             pass
+        _fail_ts[key] = time.time()      # error OR empty: back off briefly
         return ent["data"] if ent else []
 
 
@@ -327,8 +339,15 @@ async def api_holiday():
 
 @app.get("/api/earthquake/current", tags=["earthquake"], summary="Active earthquake event")
 async def api_earthquake():
-    """The event currently holding the takeover screen (within its `EARTHQUAKE_HOLD_SECONDS` window), else `{}`."""
-    return eq_service.active() or {}
+    """The event currently holding the takeover screen (within its `EARTHQUAKE_HOLD_SECONDS` window), else `{}`.
+    `holdFor` is rewritten to the REMAINING seconds so clients can count down on
+    their own clock (robust against tablet/server clock skew)."""
+    ev = eq_service.active()
+    if not ev:
+        return {}
+    out = dict(ev)
+    out["holdFor"] = max(1, round(ev["expiresAt"] - time.time()))
+    return out
 
 
 @app.get("/api/earthquake/recent", tags=["earthquake"], summary="Recent quakes (browsable)")
@@ -369,6 +388,7 @@ if config.ENABLE_DEMO:
             "cancelled": False,
             "receivedAt": "2026-07-02T14:30:05+09:00",
             "expiresAt": time.time() + config.EARTHQUAKE_HOLD_SECONDS,
+            "holdFor": config.EARTHQUAKE_HOLD_SECONDS,
         }
         return base
 
@@ -393,10 +413,11 @@ if config.ENABLE_DEMO:
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     clients.add(ws)
-    active = eq_service.active()
-    if active:
-        await ws.send_json({"type": "earthquake", "event": active})
     try:
+        # replay inside try/finally: a failed send must not leak the socket into `clients`
+        active = eq_service.active()
+        if active:
+            await ws.send_json({"type": "earthquake", "event": active})
         while True:
             await ws.receive_text()   # ignore inbound; keep the socket open
     except WebSocketDisconnect:

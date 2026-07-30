@@ -29,6 +29,7 @@ function applyI18n() {
   if (lastHourly) renderHourly(lastHourly);
   if (lastNews) renderNews(lastNews);
   if (lastHoliday) renderHoliday(lastHoliday);
+  renderAnime(lastAnime || []);   // re-render so the 準備中 placeholder switches language too
   updateFullscreenBtn();
 }
 
@@ -149,8 +150,10 @@ function startClock() {
 
 // ---- weather ---------------------------------------------------------------
 async function loadWeather() {
+  const want = cityId;   // discard the response if the user switched city mid-flight
   try {
     const data = await (await fetch("/api/weather?city=" + encodeURIComponent(cityId || ""))).json();
+    if (want !== cityId) return;
     if (data && data.today) { lastWeather = data; renderWeather(data); }
   } catch (_) { /* keep last */ }
 }
@@ -203,9 +206,11 @@ function renderWeather(data) {
 
 // today's hourly forecast (met.no)
 async function loadHourly() {
+  const want = cityId;
   try {
     const list = await (await fetch("/api/weather/hourly?city=" + encodeURIComponent(cityId || ""))).json();
-    if (Array.isArray(list)) {
+    if (want !== cityId) return;
+    if (Array.isArray(list) && list.length) {   // empty = backend cold start during outage; keep last-good
       lastHourly = list;
       renderHourly(list);
       // if the today card is missing its high/low, re-render now that hourly is in
@@ -262,7 +267,7 @@ let lastHoliday = null;
 async function loadHoliday() {
   try {
     const list = await (await fetch("/api/holiday")).json();
-    if (Array.isArray(list)) { lastHoliday = list; renderHoliday(list); }
+    if (Array.isArray(list) && list.length) { lastHoliday = list; renderHoliday(list); }   // keep last-good on empty
   } catch (_) { /* keep last */ }
 }
 function jstDateISO() {   // today's date in JST as "YYYY-MM-DD"
@@ -295,7 +300,15 @@ async function loadAnime() {
     const list = await (await fetch("/api/anime")).json();
     // non-empty only: an empty list just means the backend hasn't recovered from a
     // Jikan outage yet — don't wipe a list we're already showing
-    if (Array.isArray(list) && list.length) { lastAnime = list; lastAnimeDay = jstDateISO(); renderAnime(list); }
+    if (Array.isArray(list) && list.length) {
+      const changed = JSON.stringify(list) !== JSON.stringify(lastAnime);
+      lastAnime = list;
+      // After a JST day-roll, the backend may still serve yesterday's list for a
+      // few minutes. Only accept the fetch as "today's" when the content actually
+      // changed — otherwise keep lastAnimeDay stale so the 10-min tick retries.
+      if (changed || !lastAnimeDay || lastAnimeDay === jstDateISO()) lastAnimeDay = jstDateISO();
+      renderAnime(list);
+    }
   } catch (_) { /* keep last */ }
 }
 function jstHour() {
@@ -333,8 +346,10 @@ function weekdayInfo(dateStr, fallbackWd, fallbackMd) {
 // ---- news ------------------------------------------------------------------
 let lastNewsText = "";   // raw response of the last render — skip DOM churn when unchanged
 async function loadNews() {
+  const want = aiSrc;   // discard the response if the user switched source mid-flight
   try {
     const txt = await (await fetch("/api/news?ai=" + encodeURIComponent(aiSrc || ""))).text();
+    if (want !== aiSrc) return;
     if (!txt || txt === lastNewsText) return;   // headlines unchanged → no re-render
     const data = JSON.parse(txt);
     if (data) { lastNewsText = txt; lastNews = data; renderNews(data); }
@@ -342,9 +357,11 @@ async function loadNews() {
 }
 
 function renderNews(data) {
+  // per-column empty guard: a backend cold-started during an outage returns [] —
+  // keep whatever the tablet is already showing instead of blanking the column
   const aiLang = (aiSources.find((s) => s.id === aiSrc) || {}).lang || "zh";
-  fillNewsList("news-ai", data.ai || [], aiLang);
-  fillNewsList("news-japan", data.japan || [], "ja");   // 主要ニュース is always Japanese
+  if ((data.ai || []).length) fillNewsList("news-ai", data.ai, aiLang);
+  if ((data.japan || []).length) fillNewsList("news-japan", data.japan, "ja");   // 主要ニュース is always Japanese
 }
 
 function fillNewsList(id, items, contentLang) {
@@ -400,13 +417,20 @@ const MANUAL_IDLE_MS = 60 * 1000;   // auto-return a manually-opened 🗾 overla
 let manualMode = false, shownEvent = null, dismissedBase = null;
 let recentQuakes = [];   // last N 地震情報 for the 🗾 browse list
 
-const eventBase = (ev) => ev.kind + ":" + ev.id;
+// key by originTime (the quake itself), not the bulletin id — dismissing one
+// bulletin then also dismisses the same quake's follow-up reports (第2報, 詳報…)
+const eventBase = (ev) => ev.kind + ":" + (ev.originTime || ev.id);
 
-const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 50: "i5s", 55: "i6w", 60: "i6s", 70: "i7" };
+// 46 = 震度5弱以上と推定 (exact intensity not yet determined)
+const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 46: "i5w", 50: "i5s", 55: "i6w", 60: "i6s", 70: "i7" };
 function scaleClass(s) { return SCALE_CLASS[s] || "i1"; }
 function quakeScale(ev) {
   const s = Number(ev && ev.maxScale);
-  return Number.isFinite(s) && s >= 0 ? s : 999;   // unknown/-1 intensity → fail-safe: show it (don't drop an early EEW)
+  if (Number.isFinite(s) && s >= 0) return s;
+  // unknown intensity: an early EEW fails safe (show it — every second counts);
+  // but a 551 with -1 (震源に関する情報 carries no intensity) must NOT bypass the
+  // per-device threshold — it stays in the 🗾 list only.
+  return ev && ev.kind === "eew" ? 999 : -1;
 }
 
 function formatDepth(km) {
@@ -430,7 +454,12 @@ function formatOrigin(s) {
 // A real earthquake/EEW arrived: take over the screen and auto-hide after 5 min.
 function handleQuake(ev) {
   if (!ev || !ev.kind) return;
-  if (ev.cancelled) { hideQuake(); return; }
+  if (ev.cancelled) {
+    // a cancel only hides the event it refers to — not an unrelated takeover
+    // that happens to be on screen, and never a manual 🗾 browse session
+    if (!manualMode && shownEvent && eventBase(shownEvent) === eventBase(ev)) hideQuake();
+    return;
+  }
   if (ev.kind === "quake") {                       // keep the browse list fresh
     const key = ev.originTime || ev.id;
     recentQuakes = [ev, ...recentQuakes.filter((e) => (e.originTime || e.id) !== key)].slice(0, 5);
@@ -442,7 +471,8 @@ function handleQuake(ev) {
   document.getElementById("quake-recent").classList.add("hidden");   // live takeover: no list
   showQuakeLayout(ev);
   currentQuakeKey = ev.kind + ":" + ev.id + ":" + ev.revision;
-  scheduleHide(ev.expiresAt);
+  // prefer the duration (clock-skew-proof local deadline) over the server epoch
+  scheduleHide(ev.holdFor ? Date.now() / 1000 + ev.holdFor : ev.expiresAt);
 }
 
 function showQuakeLayout(ev) {
@@ -645,7 +675,9 @@ async function loadRecentQuakes() {
 async function pollQuake() {
   try {
     const ev = await (await fetch("/api/earthquake/current")).json();
-    if (ev && ev.kind && ev.expiresAt * 1000 > Date.now()) {
+    // the server's active() already filters expired events by ITS clock — comparing
+    // its epoch against the tablet clock here would mis-drop alerts on a skewed tablet
+    if (ev && ev.kind) {
       const key = ev.kind + ":" + ev.id + ":" + ev.revision;
       if (key !== currentQuakeKey) handleQuake(ev);
     }

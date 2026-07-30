@@ -20,8 +20,9 @@ import websockets
 P2P_HISTORY_URL = "https://api.p2pquake.net/v2/history"
 
 # JMA 震度 (shindo) scale code -> label
+# 46 = 震度5弱以上と推定 (P2P sends it when the exact intensity isn't determined yet)
 SCALE = {10: "1", 20: "2", 30: "3", 40: "4",
-         45: "5弱", 50: "5強", 55: "6弱", 60: "6強", 70: "7"}
+         45: "5弱", 46: "5弱", 50: "5強", 55: "6弱", 60: "6強", 70: "7"}
 
 # P2P 551 issue.type -> human label (the kind of earthquake bulletin)
 ISSUE_LABEL = {
@@ -92,7 +93,15 @@ def normalize_eew(msg):
     eq = msg.get("earthquake", {}) or {}
     hypo = eq.get("hypocenter", {}) or {}
     areas = msg.get("areas", []) or []
-    regions = _regions_from((a.get("pref") or a.get("name", ""), a.get("scaleTo", -1)) for a in areas)
+
+    def _area_scale(a):
+        # scaleTo=99 means "〜程度以上" (upper bound unknown) — typical of the FIRST
+        # serial of a warning. Fall back to scaleFrom so the map/badge show the
+        # known lower bound instead of an unmapped 99 (which would render as nothing).
+        s = a.get("scaleTo", -1)
+        return a.get("scaleFrom", -1) if s == 99 else s
+
+    regions = _regions_from((a.get("pref") or a.get("name", ""), _area_scale(a)) for a in areas)
     max_scale = max((r["scale"] for r in regions), default=-1)
     return {
         "kind": "eew",
@@ -179,7 +188,10 @@ class EarthquakeService:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                await asyncio.sleep(5)     # reconnect with a small backoff
+                pass
+            # unconditional: a graceful server close exits the `async with` without
+            # raising, which would otherwise reconnect in a tight loop
+            await asyncio.sleep(5)
 
     async def _handle(self, raw):
         try:
@@ -201,6 +213,7 @@ class EarthquakeService:
             datetime.timezone(datetime.timedelta(hours=9))
         ).isoformat(timespec="seconds")
         event["expiresAt"] = now + self.hold
+        event["holdFor"] = self.hold   # duration, clock-skew-proof (tablets compute their own deadline)
 
         # Always keep the 🗾 browse list complete, regardless of size.
         if event["kind"] == "quake":

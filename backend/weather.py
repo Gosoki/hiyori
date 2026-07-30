@@ -186,10 +186,10 @@ def _today_temps(ts, today):
 def _weekly(week, today):
     try:
         w0, w1 = week["timeSeries"][0], week["timeSeries"][1]
-    except (KeyError, IndexError):
+        a0, a1 = w0["areas"][0], w1["areas"][0]   # inside the guard: empty/malformed areas
+    except (KeyError, IndexError, TypeError):     # degrade to no-weekly, keep today's card
         return []
     defs = w0.get("timeDefines", [])
-    a0, a1 = w0["areas"][0], w1["areas"][0]
     codes = a0.get("weatherCodes", [])
     pops = a0.get("pops", [])
     tmin = a1.get("tempsMin", [])

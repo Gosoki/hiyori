@@ -20,6 +20,7 @@ BACKEND="$APP/backend"
 [ -f "$BACKEND/main.py" ]          || { echo "❌ $BACKEND 下没有 main.py —— deploy.sh 必须放在 hiyori 项目根目录"; exit 1; }
 [ -f "$BACKEND/requirements.txt" ] || { echo "❌ $BACKEND 下没有 requirements.txt"; exit 1; }
 [ -d "$APP/frontend" ]             || { echo "❌ $APP 下没有 frontend/ —— 后端启动时要托管它"; exit 1; }
+case "$APP" in *[[:space:]]*) echo "❌ 项目路径含空格（systemd ExecStart 不好处理）: $APP"; exit 1;; esac
 [ "$(id -u)" -eq 0 ]               || { echo "❌ 需要 root（要写 /etc/systemd/system 并安装依赖）"; exit 1; }
 echo "✔ 项目目录: $APP"
 
@@ -67,9 +68,10 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=$BACKEND
-ExecStart=$UVICORN main:app --host 0.0.0.0 --port $PORT
+ExecStart="$UVICORN" main:app --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
