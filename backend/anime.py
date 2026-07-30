@@ -33,6 +33,10 @@ async def fetch_anime(count=24):
     now = datetime.datetime.now(JST)
     today_i, tmr_i = now.weekday(), (now.weekday() + 1) % 7
     async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "hiyori/1.0"}) as client:
+        # Jikan's gateway 504s on compressed responses during its (frequent, days-long)
+        # outages while identity responses keep working — don't request compression.
+        # Payload is ~10-20 shows twice a day; the bandwidth cost is irrelevant.
+        client.headers.pop("accept-encoding", None)
         today = await _day(client, today_i)
         tomorrow = await _day(client, tmr_i)
     rows = [{"time": t, "title": ttl} for t, ttl in today]
