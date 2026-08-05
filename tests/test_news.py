@@ -42,7 +42,7 @@ def test_feed_names_are_shortened(raw, expect):
     assert N.truncate_feed_name(raw) == expect
 
 
-def test_clean_source_never_empties_a_name():
+def test_strip_outlet_suffix_never_empties_a_name():
     assert N.strip_outlet_suffix("ニュース") == "ニュース"     # would otherwise become ""
     assert N.strip_outlet_suffix("産経ニュース") == "産経"
 
@@ -206,3 +206,67 @@ def test_hashtag_stripper_is_not_quadratic():
     start = time.perf_counter()
     pat.sub("", "#a" * 5000 + "!")
     assert time.perf_counter() - start < 1.0
+
+
+# --------------------------------------------------------------------------
+# Configured feeds
+# --------------------------------------------------------------------------
+def test_hn_query_feed_does_not_ask_for_a_count():
+    """hnrss's `count=N` intermittently answers with an EMPTY feed (or hangs past
+    our 15s timeout) for the same query it serves fine without it — measured 0 items
+    on 3 of 4 fast responses plus one timeout, vs 20 items on 4 of 4 without. The
+    default page is already well over NEWS_MAX_PER_CATEGORY, so count buys nothing."""
+    import config
+    for src in config.AI_SOURCES:
+        for url in src["urls"]:
+            if "hnrss.org" in url:
+                assert "count=" not in url, f"{src['id']}: {url}"
+
+
+def test_every_configured_feed_url_is_https():
+    import config
+    urls = [u for s in config.AI_SOURCES for u in s["urls"]] + config.NEWS_JAPAN["urls"] + [config.ALERT_FEED]
+    for u in urls:
+        assert u.startswith("https://"), u
+
+
+def test_feed_source_ids_are_unique():
+    """A duplicate id would make one source unreachable — _ai_source returns the first."""
+    import config
+    ids = [s["id"] for s in config.AI_SOURCES]
+    assert len(ids) == len(set(ids)), ids
+    assert config.DEFAULT_AI_SOURCE in ids
+    city_ids = [c["id"] for c in config.CITIES]
+    assert len(city_ids) == len(set(city_ids)), city_ids
+    assert config.DEFAULT_CITY in city_ids
+
+
+def test_hacker_news_feed_shape_parses(monkeypatch):
+    """The HN feed is the one English source and has its own title convention —
+    parse the captured payload to be sure nothing is silently dropped."""
+    import asyncio
+    import feedparser
+    parsed = feedparser.parse(load_bytes("rss_hn.xml"))
+    assert parsed.entries, "fixture has no entries"
+
+    async def fake_parse(client, url):
+        return parsed
+
+    monkeypatch.setattr(N, "_parse_feed", fake_parse)
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(N.httpx, "AsyncClient", lambda *a, **kw: Client())
+    out = asyncio.run(N.fetch_news({"ai": {"mode": "recent", "urls": ["https://hnrss.org/newest"]}}, 12))["ai"]
+    assert len(out) == 12
+    for item in out:
+        assert item["title"].strip()
+        assert item["link"].startswith("http")
+        # not a Google News feed, so the ' - outlet' split must NOT have been applied
+        assert item["source"] == N.truncate_feed_name(parsed.feed.get("title", ""))
+    assert [i["ts"] for i in out] == sorted((i["ts"] for i in out), reverse=True), "not newest-first"

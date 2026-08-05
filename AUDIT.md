@@ -71,7 +71,7 @@ JMA 约 17:00 JST 就把当天气温从短期预报里撤掉了（**已实测**�
 `by_date.setdefault(d[:10], []).append(int(p))` —— `setdefault` 先建了空列表，
 `int()` 才抛异常，于是留下一个空列表；后面 `max(v)` 抛 `ValueError`，
 而外层只 catch 了 `(KeyError, IndexError)`。只要 JMA 回一个非数字气温/降水值，
-整次天气拉取就失败（靠 `_ensure` 兜住旧数据，所以表现是"天气默默不更新了"）。
+整次天气拉取就失败（靠缓存层兜住旧数据，所以表现是"天气默默不更新了"）。
 抽出 `_ints()`：**先转换、再插入**。
 
 **5. 分区匹配用的是 `areas[0]` 而不是配置的 `class10_code`**
@@ -150,18 +150,19 @@ JMA 约 17:00 JST 就把当天气温从短期预报里撤掉了（**已实测**�
 
 ### 🟡 D2. `_parse` 对结构性畸形的 JMA 响应仍然直接抛
 
-`data` 为空数组、缺 `timeSeries` 等情况会抛异常，由 `_ensure` 兜住 → 保留上一份好
+`data` 为空数组、缺 `timeSeries` 等情况会抛异常，由缓存层（现 `Feed`）兜住 → 保留上一份好
 数据；但**冷启动**时就一直是空白卡片。
 
 我认为**现状是对的**：与其编一张写满"—"的卡片，不如让"データ取得中…"继续显示。
 但如果你希望冷启动也有个降级卡片（只有城市名+日期），说一声，改起来很快。
 
-### 🟡 D3. 全屏阈值档位与 config 默认值可能对不上
+### ✅ D3. 全屏阈值档位与 config 默认值对不上 —— **已修**（见 §七）
 
 `app.js` 的 `THRESHOLDS` 只有 `30 / 40 / 45` 三档。如果 `EARTHQUAKE_MIN_SCALE`
 被改成别的值（比如 50），设置面板里**不会有任何一档高亮**，虽然阈值本身是生效的。
 要不要：(a) 保持（档位就是产品定义的三档）；(b) 从 config 下发档位列表；
-(c) 把 config 值不在列表时也追加一档。我倾向 (a)，未改。
+(c) 把 config 值不在列表时也追加一档。**最后选了 (c)** —— 这不是口味问题:
+阈值明明生效却没有任何一档高亮，等于界面在骗人。实现见 §七。
 
 ### 🟡 D4. `anime.py` 的 `accept-encoding` 处理
 
@@ -174,7 +175,9 @@ JMA 约 17:00 JST 就把当天气温从短期预报里撤掉了（**已实测**�
 
 ---
 
-## 三、命名 / 可读性记录（未改，交给你判断）
+## 三、命名 / 可读性记录
+
+> ⚠️ 本节是**第一轮**的记录。标 ✅ 的行后来在 §七 里改掉了，剩下的仍保持原样。
 
 明显的我已经改了（`_quake_key` → `quake_key`，因为它是跨模块 import 的，
 不该带下划线前缀；`no_store` → `security_and_cache_headers`，因为它早就不只做
@@ -182,17 +185,17 @@ JMA 约 17:00 JST 就把当天气温从短期预报里撤掉了（**已实测**�
 
 | 名字 | 位置 | 歧义在哪 | 建议 |
 |---|---|---|---|
-| `revision` | `earthquake.py` 两个 normalize | **同名两义**：551 里塞的是电文*类型*（`DetailScale`），556 里才是真的报数序号（第2報）。目前只做相等比较所以不出错，但字段名在 551 上是骗人的 | 拆成 `bulletin`（551）/ `serial`（556），或改叫 `stamp`。已加注释说明 |
-| `_ensure` / `_ensure_ai` | `main.py` | "ensure"什么？实际是"取缓存，过期就重拉，失败保底" | `cached_city_feed` / `cached_ai_feed` |
-| `empty`（`_ensure` 形参） | `main.py:80` | 不是"空"，是**冷启动兜底值** | `cold_start_value` |
-| `state` | `main.py:24` | 太泛，实际是"共享的全局数据源快照" | `feeds` / `shared_feeds` |
-| `_short_source` / `_clean_source` / `_split_source` | `news.py` | 三个名字极像、做的事完全不同（截断源名 / 去后缀 / 从标题里切源名） | `truncate_feed_name` / `strip_outlet_suffix` / `split_title_and_outlet` |
-| `SCALE_CLASS` | `app.js` + `map.js` 各一份 | 两份完全相同的字面量，改一处漏一处 | 提到 `i18n.js` 或新建 `shindo.js` 共享 |
+| ✅ `revision` → `bulletin` | `earthquake.py` 两个 normalize | **同名两义**：551 里塞的是电文*类型*（`DetailScale`），556 里才是真的报数序号（第2報）。目前只做相等比较所以不出错，但字段名在 551 上是骗人的 | 拆成 `bulletin`（551）/ `serial`（556），或改叫 `stamp`。已加注释说明 |
+| ✅ `_ensure` / `_ensure_ai` → `Feed` 类 | `main.py` | "ensure"什么？实际是"取缓存，过期就重拉，失败保底" | `cached_city_feed` / `cached_ai_feed` |
+| ✅ `empty` → `cold_value` | `main.py` | 不是"空"，是**冷启动兜底值** | `cold_start_value` |
+| ✅ `state` → `latest` | `main.py` | 太泛，实际是"共享的全局数据源快照" | `feeds` / `shared_feeds` |
+| ✅ 三个 source 函数已重命名 | `news.py` | 三个名字极像、做的事完全不同（截断源名 / 去后缀 / 从标题里切源名） | `truncate_feed_name` / `strip_outlet_suffix` / `split_title_and_outlet` |
+| ✅ `SCALE_CLASS` 已合并到 `core.js` | `app.js` + `map.js` 各一份 | 两份完全相同的字面量，改一处漏一处 | 提到 `i18n.js` 或新建 `shindo.js` 共享 |
 | `quakeScale()` 返回 `999` | `app.js` | 哨兵值，含义是"未知强度的 EEW，必须占屏" | 返回 `Infinity`，或显式返回 `{scale, alwaysShow}` |
-| `_dparts` | `weather.py` | "d parts"？实际是"月/日 + 星期" | `date_labels` |
-| `_num` | `weather.py:49` | 泛，实际是"按下标安全取整数" | `int_at` |
+| ✅ `_dparts` → `date_labels` | `weather.py` | "d parts"？实际是"月/日 + 星期" | `date_labels` |
+| ✅ `_num` → `int_at` | `weather.py` | 泛，实际是"按下标安全取整数" | `int_at` |
 | `warea` / `a0` / `a1` / `w0` / `w1` | `weather.py` `_parse`/`_weekly` | 单字母+数字，读的时候要回去数 `timeSeries` 下标 | `weather_area` / `weekly_codes_area` / `weekly_temps_area` |
-| `_city` / `_ai_source` | `main.py` | 名词形式但是查找函数 | `find_city` / `find_ai_source` |
+| ✅ `_city`/`_ai_source` → `find_*` | `main.py` | 名词形式但是查找函数 | `find_city` / `find_ai_source` |
 
 ---
 

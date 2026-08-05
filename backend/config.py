@@ -48,7 +48,12 @@ AI_SOURCES = [
         "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",   # ITmedia AI+
     ]},
     {"id": "global", "name": "Global", "lang": "en", "mode": "recent", "urls": [
-        "https://hnrss.org/newest?q=AI+OR+LLM+OR+OpenAI+OR+Anthropic&count=25",   # Hacker News
+        # Hacker News. Do NOT add &count=N: hnrss answers the search query fine
+        # without it (20 items, well over NEWS_MAX_PER_CATEGORY) but with count it
+        # intermittently returns an EMPTY feed or hangs past our 15s timeout —
+        # measured 0 items on 3 of 4 fast responses plus one outright timeout,
+        # versus 20 items on 4 of 4 without it.
+        "https://hnrss.org/newest?q=AI+OR+LLM+OR+OpenAI+OR+Anthropic",
     ]},
 ]
 DEFAULT_AI_SOURCE = "cn"   # id from AI_SOURCES; each device can override in Settings
