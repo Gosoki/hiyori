@@ -11,7 +11,8 @@
 - 平板（Windows）只需用浏览器全屏打开一个网址，**零框架、无额外性能开销**。
 - 数据源全部免费、无需 API key：
   - 天气：気象庁 (JMA) 今日/週間预报 + met.no (yr.no) 当天逐小时 — 点左上角地区名可切换城市(内置 12 个日本主要城市,默认東京)
-  - 地震：P2P地震情報 (WebSocket) — 地震情報(551) + 緊急地震速報 EEW(556)
+  - 地震：P2P地震情報 (WebSocket) — 地震情報(551) + 緊急地震速報 EEW(556);
+    **P2P 断线超过 5 分钟自动切到気象庁 XML 备用源**(仅地震情報,无 EEW),右上角 🗾 会亮琥珀色小点提示
   - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,红色高亮,平时不显示)
   - AI・テック：每台设备可在设置里切换 **中文**(量子位 + Solidot)/ **日本語**(ITmedia AI+)/ **Global**(Hacker News)
   - 汇率：open.er-api.com(底部小卡片,双向显示,保留小数;结果整数部分不足 1 时基数 ×10,如 `100円=4.201元`)
@@ -36,7 +37,7 @@ bash deploy.sh    # 幂等，升级时 git pull 后重跑即可；会询问端�
 cd hiyori/backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-./run.sh                    # 或: uvicorn main:app --host 0.0.0.0 --port 12345
+./run.sh                    # 默认 12345；换端口：PORT=8000 ./run.sh
 ```
 
 打开 `http://<linux机器IP>:12345` 就能看到界面。记下这个 IP。
@@ -87,12 +88,17 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs
 
 ## 3. 预览地震界面（不用等真地震）
 
-`config.py` 里 `ENABLE_DEMO = True` 时，浏览器访问：
+**默认关闭**。想预览时把 `config.py` 的 `ENABLE_DEMO` 改成 `True` 并重启后端，浏览器访问：
 
 - `http://<IP>:12345/api/demo/quake` → 模拟一次「地震情報」全屏
 - `http://<IP>:12345/api/demo/eew`   → 模拟一次「緊急地震速報」全屏（红色脉冲）
 
-90 秒后自动消失。上线后可把 `ENABLE_DEMO` 设为 `False`。
+90 秒后自动消失。**看完记得改回 `False`。**
+
+> ⚠️ 为什么默认关：这两个接口**无鉴权**,而且是 `GET`——任何能访问该端口的人,
+> 以及任何链接预取 / 浏览器推测导航 / 爬虫碰到这个 URL,都能让所有平板弹出一次假地震全屏。
+> 假警报会训练人忽略真警报,而地震警报是这个仪表盘里唯一真正要紧的功能。
+> 开着的时候后端每次启动都会在 `journalctl -u hiyori` 里打一条 WARNING 提醒。
 
 ---
 
@@ -125,11 +131,16 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs
 
 > 这几个页面供**运维/开发**在有网的机器上查看;平板前端本身零外部依赖(严格 CSP),不受影响。
 
+> 接口无鉴权,只应暴露在内网。后端对所有响应附带 `X-Content-Type-Options: nosniff`、
+> `Referrer-Policy: no-referrer`、`Content-Security-Policy: frame-ancestors 'none'`
+> (`frame-ancestors` 在 `<meta>` 里按规范无效,只能走响应头,故与页面内的 CSP 分开下发)。
+
 ### HTTP 接口一览
 
 | 方法 · 路径 | 说明 |
 |---|---|
-| `GET /api/config` | 前端启动默认值:语言 / 城市 / AI 源 / 地震全屏阈值 |
+| `GET /api/health` | **各上游存活状态**(每路数据源的成功/失败/陈旧秒数 + 地震长连接状态)。见下 |
+| `GET /api/config` | 前端启动默认值:语言 / 城市 / AI 源 / 地震全屏阈值 / 🗾 列表条数 |
 | `GET /api/cities` | 可选城市列表 `[{id,name}]` |
 | `GET /api/ai-sources` | 可选 AI 源分组 `[{id,name,lang}]` |
 | `GET /api/weather?city=` | 今日+周间预报(JMA);省略 `city` 用默认城市 |
@@ -145,6 +156,26 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs
 
 所有数据接口在上游抓取失败时保留上一份好数据(`last-good`),永不返回空白栏。
 
+### 上游存活状态 `/api/health`
+
+正因为**所有失败路径都降级成"保留上一份好数据"**,上游挂掉时屏幕上什么都不会变——
+"一切正常"和"这栏已经三小时没更新了"从外面看一模一样。这个接口是唯一能区分两者的地方:
+
+```jsonc
+{
+  "status": "ok",              // 任一数据源失败或地震长连接断开 → "degraded"
+  "degraded": [],              // 具体是哪几路
+  "uptime": 3600, "clients": 2,
+  "quake": { "connected": true, "offlineFor": 0, "reconnects": 0,
+             "fallbackActive": false },   // fallbackActive=已切到気象庁备用源
+  "feeds": { "weather": { "ok": true, "lastOkAge": 42, "consecutiveFails": 0,
+                          "lastError": "" }, /* … */ }
+}
+```
+
+数据源失败/恢复时后端会往 `journalctl -u hiyori` 打一条 WARNING(**只在状态变化时打**,
+长时间故障不会刷屏)。平板上则表现为右上角 🗾 出现小圆点:琥珀=正在用備用地震源、红=完全收不到地震信息。
+
 ### WebSocket 实时地震推送
 
 ```
@@ -159,7 +190,10 @@ ws://<IP>:12345/ws
   "expiresAt": 1780000000, "cancelled": false, "…": "…" } }
 ```
 
-`kind` 为 `eew`(緊急地震速報,红色脉冲)或 `quake`(地震情報)。前端据此切换全屏地震布局;`maxScale` 低于本机阈值则只进 🗾 列表(`maxScale=-1` 未知强度时按“宁可误报”仍全屏)。字段结构见 `backend/earthquake.py` 的 `normalize_quake` / `normalize_eew`。
+`kind` 为 `eew`(緊急地震速報,红色脉冲)或 `quake`(地震情報)。前端据此切换全屏地震布局;`maxScale` 低于本机阈值则只进 🗾 列表(`maxScale=-1` 未知强度时:EEW 按“宁可误报”仍全屏,551 则遵守阈值)。
+
+`bulletin` = 同一次地震的**第几报**——551 用报文类型(`ScalePrompt`→`DetailScale`…),556 用序号(第1報/第2報)。写法不同但作用一样,只用于相等比较("这条我是不是已经显示过了")。
+`source` = `p2p` 或 `jma`(备用源)。完整字段见 `backend/earthquake.py` 的 `normalize_quake` / `normalize_eew`。
 
 ---
 
@@ -168,26 +202,37 @@ ws://<IP>:12345/ws
 ```
 hiyori/
 ├── backend/
-│   ├── main.py          FastAPI：API + WebSocket + 托管前端
-│   ├── config.py        所有可调参数
-│   ├── weather.py       JMA 天气抓取与解析
-│   ├── news.py          RSS 标题聚合
-│   ├── fx.py            汇率抓取 (open.er-api)
-│   ├── anime.py         今日新番放送 (Jikan/MAL)
-│   ├── holiday.py       日本祝日倒计时 (holidays-jp)
-│   ├── earthquake.py    P2P地震情報 WebSocket 客户端
+│   ├── main.py             FastAPI：API + WebSocket + 托管前端 + 缓存/健康
+│   ├── config.py           所有可调参数
+│   ├── weather.py          JMA 天气抓取与解析
+│   ├── news.py             RSS 标题聚合
+│   ├── fx.py               汇率抓取 (open.er-api)
+│   ├── anime.py            今日新番放送 (Jikan/MAL)
+│   ├── holiday.py          日本祝日倒计时 (holidays-jp)
+│   ├── earthquake.py       P2P地震情報 WebSocket 客户端
+│   ├── earthquake_jma.py   気象庁 XML 备用地震源（P2P 挂掉时接管）
 │   ├── requirements.txt
 │   └── run.sh
-├── frontend/
+├── frontend/               零依赖零构建；classic script，加载顺序即契约
 │   ├── index.html
-│   ├── style.css        暗色主题，vh/vw 自适应
-│   ├── app.js           轮询天气/新闻 + WebSocket 接收地震 + 布局切换
-│   ├── map.js           自绘日本地图（SVG，震源+震度上色）
-│   ├── i18n.js          多语言文案
-│   └── japan.geo.json   47 都道府县边界（已生成，602KB）
+│   ├── style.css           暗色主题，vh/vw 自适应
+│   ├── core.js             共享状态 / t() / JST 日期助手 / 时钟
+│   ├── weather.js          今日卡片 + 周间 + 逐时
+│   ├── news.js             两栏新闻 + 裁切适配
+│   ├── widgets.js          汇率 / 祝日 / 新番
+│   ├── quake.js            地震占屏 + WebSocket + 🗾 列表 + 数据源健康角标
+│   ├── app.js             设置面板 + 事件绑定 + init（**必须最后加载**）
+│   ├── map.js              自绘日本地图（SVG，震源+震度上色）
+│   ├── i18n.js             多语言文案
+│   └── japan.geo.json      47 都道府县边界（已生成，602KB，传输时 gzip 到 ~90KB）
+├── tests/                  见 tests/README.md（离线单测 + `-m live` 契约测试）
 └── tools/
-    └── build_map.py     从 dataofjapan/land 生成 japan.geo.json（一般无需再跑）
+    └── build_map.py        从 dataofjapan/land 生成 japan.geo.json（一般无需再跑）
 ```
+
+> 前端拆成多个 `<script>` 但**没有引入任何构建步骤或模块加载器**——它们共享一个全局作用域，
+> 所以 `index.html` 里的**加载顺序就是唯一的契约**：`core.js` 最先（共享状态），
+> `app.js` 最后（唯一有顶层执行代码的文件）。改动时别打乱顺序。
 
 > 地图数据来自 [dataofjapan/land](https://github.com/dataofjapan/land)（MIT），已简化为 2 位小数精度（~1km，仪表盘尺度下无差别）。想改精度重新生成：`python3 tools/build_map.py`。
 

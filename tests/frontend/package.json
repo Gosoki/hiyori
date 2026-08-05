@@ -1,0 +1,11 @@
+{
+  "name": "hiyori-frontend-tests",
+  "private": true,
+  "description": "jsdom tests for the Hiyori tablet frontend. jsdom is a test-only dependency — the dashboard itself ships zero dependencies.",
+  "scripts": {
+    "test": "node --test \"*.test.mjs\""
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

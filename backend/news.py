@@ -1,4 +1,5 @@
 """Aggregate RSS/Atom headlines. Only titles are kept — no article bodies."""
+import asyncio
 import calendar
 import re
 
@@ -16,7 +17,7 @@ def _timestamp(entry):
     return 0
 
 
-def _short_source(title):
+def truncate_feed_name(title):
     """Feed titles can be very long (e.g. the HN query feed). Keep just the name."""
     if not title:
         return ""
@@ -25,24 +26,35 @@ def _short_source(title):
     return title.strip()[:16]
 
 
-def _split_source(title):
+def split_title_and_outlet(title):
     """Google News titles end with ' - 媒体名'. Split it off → (clean_title, source)."""
     m = re.match(r"^(.*\S)\s[-–—]\s([^-–—]{1,20})$", title)
     if m:
-        return m.group(1).strip(), _clean_source(m.group(2).strip())
+        return m.group(1).strip(), strip_outlet_suffix(m.group(2).strip())
     return title, ""
 
 
-def _clean_source(src):
+# Outlets whose name genuinely ends in ニュース — the suffix is the brand, not a
+# redundant label, so stripping it produces a wrong name (ウェザーニュース → ウェザー).
+# There is no way to tell the two cases apart from the string alone.
+SOURCE_KEEP_SUFFIX = {"ウェザーニュース", "アベマニュース", "テレ朝ニュース", "日テレニュース"}
+
+
+def strip_outlet_suffix(src):
     """Drop the redundant ニュース / 新聞 suffix from a source name (産経ニュース → 産経,
     読売新聞 → 読売). English 'News' (Hacker News, 47NEWS) is left as-is."""
+    if src in SOURCE_KEEP_SUFFIX:
+        return src
     return re.sub(r"(ニュース|新聞|新闻)$", "", src).strip() or src
 
 
 async def _parse_feed(client, url):
     r = await client.get(url)
     r.raise_for_status()
-    return feedparser.parse(r.content)
+    # feedparser is synchronous and takes ~65 ms on the Google News feed. That is
+    # 65 ms the event loop cannot read the earthquake WebSocket or fan out an EEW,
+    # so keep it off the loop entirely.
+    return await asyncio.to_thread(feedparser.parse, r.content)
 
 
 def _item(entry, feed_source, split_source=False):
@@ -51,11 +63,11 @@ def _item(entry, feed_source, split_source=False):
         return None
     # only Google News titles use the ' - 媒体名' convention; splitting other feeds
     # would amputate legitimate trailing clauses (e.g. '速報 地震発生 - 津波の心配なし')
-    clean, src = _split_source(title) if split_source else (title, "")
+    clean, src = split_title_and_outlet(title) if split_source else (title, "")
     return {
         "title": clean,
         "link": entry.get("link", ""),
-        "source": src or _clean_source(feed_source),
+        "source": src or strip_outlet_suffix(feed_source),
         "ts": _timestamp(entry),
     }
 
@@ -69,7 +81,7 @@ async def fetch_news(feeds_by_category, max_per_category):
             for url in spec.get("urls", []):
                 try:
                     parsed = await _parse_feed(client, url)
-                    source = _short_source(parsed.feed.get("title", ""))
+                    source = truncate_feed_name(parsed.feed.get("title", ""))
                     is_google = "news.google." in url
                     for e in parsed.entries:
                         it = _item(e, source, split_source=is_google)

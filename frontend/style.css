@@ -86,6 +86,17 @@ html, body {
 }
 #quake-toggle:hover { color: var(--text); }
 #quake-toggle.active { color: var(--accent); }
+/* Live quake feed degraded: a dot on the 🗾 button, since every other symptom of a
+   dead upstream is invisible (the dashboard just keeps showing its last-good data).
+   Amber = running on the JMA polling fallback (地震情報 only, no EEW); red = no
+   source at all. Deliberately small — this must not compete with a real alert. */
+#quake-toggle.feed-degraded, #quake-toggle.feed-down { position: relative; }
+#quake-toggle.feed-degraded::after, #quake-toggle.feed-down::after {
+  content: ""; position: absolute; top: 0; right: 0;
+  width: clamp(6px, 0.9vmin, 11px); height: clamp(6px, 0.9vmin, 11px);
+  border-radius: 50%; background: var(--i3);
+}
+#quake-toggle.feed-down::after { background: var(--danger); }
 
 /* ---- Panels ---- */
 .panel {
@@ -238,6 +249,9 @@ html, body {
 }
 .news-list li.n-alert .n-title { color: var(--danger); font-weight: 700; }   /* single line (trimmed header keeps the detail visible) */
 .loading { color: var(--text-dim); font-size: var(--fs-sm); }
+/* the placeholder only turns red once /api/health confirms that feed is failing —
+   an outage should look different from a slow first load, not the same */
+.loading.is-error { color: var(--danger); }
 
 /* ============================ Bottom bar ============================ */
 /* Mirrors the weather panel: bordered outer panels holding bg-card inner cells.

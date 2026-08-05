@@ -1,0 +1,114 @@
+<?xml version='1.0' encoding='utf-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom" lang="ja">
+  <title>長期（地震火山）</title>
+  <subtitle>JMAXML publishing feed</subtitle>
+  <updated>2026-08-05T20:01:24+09:00</updated>
+  <id>https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml#long_1785927684</id>
+  <link rel="related" href="https://www.jma.go.jp/" />
+  <link rel="self" href="https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml" />
+  <link rel="hub" href="http://alert-hub.appspot.com/" />
+  <rights type="html">
+&lt;a href="https://www.jma.go.jp/jma/kishou/info/coment.html"&gt;利用規約&lt;/a&gt;,
+&lt;a href="https://www.jma.go.jp/jma/en/copyright.html"&gt;Terms of Use&lt;/a&gt;
+</rights>
+  <entry>
+    <title>震源・震度に関する情報</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805090858_0_VXSE53_010000.xml</id>
+    <updated>2026-08-05T09:08:58Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805090858_0_VXSE53_010000.xml" />
+    <content type="text">【震源・震度情報】　５日１８時０６分ころ、地震がありました。</content>
+  </entry>
+  <entry>
+    <title>震源・震度に関する情報</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805082639_0_VXSE53_270000.xml</id>
+    <updated>2026-08-05T08:26:39Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805082639_0_VXSE53_270000.xml" />
+    <content type="text">【震源・震度情報】　５日１７時２４分ころ、地震がありました。</content>
+  </entry>
+  <entry>
+    <title>震源・震度に関する情報</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805081859_0_VXSE53_010000.xml</id>
+    <updated>2026-08-05T08:18:58Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805081859_0_VXSE53_010000.xml" />
+    <content type="text">【震源・震度情報】　５日１７時１６分ころ、地震がありました。</content>
+  </entry>
+  <entry>
+    <title>震源・震度に関する情報</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805073828_0_VXSE53_010000.xml</id>
+    <updated>2026-08-05T07:38:28Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805073828_0_VXSE53_010000.xml" />
+    <content type="text">【震源・震度情報】　５日１６時３５分ころ、地震がありました。</content>
+  </entry>
+  <entry>
+    <title>震源・震度に関する情報</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805050631_0_VXSE53_270000.xml</id>
+    <updated>2026-08-05T05:06:31Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805050631_0_VXSE53_270000.xml" />
+    <content type="text">【震源・震度情報】　５日１４時０３分ころ、地震がありました。</content>
+  </entry>
+  <entry>
+    <title>震源・震度に関する情報</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805014007_0_VXSE53_010000.xml</id>
+    <updated>2026-08-05T01:40:07Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805014007_0_VXSE53_010000.xml" />
+    <content type="text">【震源・震度情報】　５日１０時３７分ころ、地震がありました。</content>
+  </entry>
+  <entry>
+    <title>降灰予報（定時）</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805110055_0_VFVO53_010000.xml</id>
+    <updated>2026-08-05T11:00:00Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805110055_0_VFVO53_010000.xml" />
+    <content type="text">【火山名　霧島山（新燃岳）　降灰予報（定時）】　現在、霧島山（新燃岳）は噴火警戒レベル２（火口周辺規制）です。霧島山（新燃岳）で噴火が発生した場合には、５日２１時から２４時までは火口から西方向、６日０９時から１２時までは火口から西方向に降灰が予想されます。</content>
+  </entry>
+  <entry>
+    <title>降灰予報（定時）</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805110030_0_VFVO53_010000.xml</id>
+    <updated>2026-08-05T11:00:00Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805110030_0_VFVO53_010000.xml" />
+    <content type="text">【火山名　雌阿寒岳　降灰予報（定時）】　現在、雌阿寒岳は噴火警戒レベル２（火口周辺規制）です。雌阿寒岳で噴火が発生した場合には、５日２１時から２４時までは火口から北方向、６日０９時から１２時までは火口から北東方向に降灰が予想されます。</content>
+  </entry>
+  <entry>
+    <title>降灰予報（定時）</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805110034_0_VFVO53_010000.xml</id>
+    <updated>2026-08-05T11:00:00Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805110034_0_VFVO53_010000.xml" />
+    <content type="text">【火山名　岩手山　降灰予報（定時）】　現在、岩手山は噴火警戒レベル２（火口周辺規制）です。岩手山で噴火が発生した場合には、５日２１時から２４時までは火口から北方向、６日０９時から１２時までは火口から北東方向に降灰が予想されます。</content>
+  </entry>
+  <entry>
+    <title>降灰予報（定時）</title>
+    <id>https://www.data.jma.go.jp/developer/xml/data/20260805110037_0_VFVO53_010000.xml</id>
+    <updated>2026-08-05T11:00:00Z</updated>
+    <author>
+      <name>気象庁</name>
+    </author>
+    <link type="application/xml" href="https://www.data.jma.go.jp/developer/xml/data/20260805110037_0_VFVO53_010000.xml" />
+    <content type="text">【火山名　阿蘇山　降灰予報（定時）】　現在、阿蘇山は噴火警戒レベル２（火口周辺規制）です。阿蘇山で噴火が発生した場合には、５日２１時から２４時までは火口から西方向、６日０９時から１２時までは火口から西方向に降灰が予想されます。</content>
+  </entry>
+  </feed>

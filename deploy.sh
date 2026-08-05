@@ -71,7 +71,14 @@ WorkingDirectory=$BACKEND
 ExecStart="$UVICORN" main:app --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=5
+# 只读取自己的代码 + 出网抓数据，不需要写系统任何位置。以下限制都不影响运行，
+# 但能把「万一被上游数据打穿」的后果限制住。ProtectHome 没开：仓库常放在 /root 或 /home。
 NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target
@@ -82,19 +89,30 @@ systemctl enable "$SVC" >/dev/null 2>&1 || true
 systemctl restart "$SVC"
 sleep 3
 
-if systemctl is-active --quiet "$SVC"; then
+# is-active 还不够：Restart=always 时崩溃重启循环里也可能瞬时是 active。
+# 真去打一次接口，确认端口上确实是本服务在应答。
+health_ok() {
+  command -v curl >/dev/null 2>&1 || return 0     # 没 curl 就只信 is-active
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/config" >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+if systemctl is-active --quiet "$SVC" && health_ok; then
   IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo
   echo "✅ 部署完成 → http://${IP:-<机器IP>}:${PORT}"
   echo "   平板全屏打开上面地址即可（kiosk 快捷方式见 README §2）。"
   echo "   API 文档: http://${IP:-<机器IP>}:${PORT}/docs"
-  echo "   ⚠ 上线后建议把 backend/config.py 的 ENABLE_DEMO 改为 False"
-  echo "     （否则任何人访问 /api/demo/quake 都能触发全屏地震演示）。"
+  echo "   想预览地震全屏：把 backend/config.py 的 ENABLE_DEMO 临时改为 True 并重启，"
+  echo "   访问 /api/demo/quake 看完后改回 False（该接口无鉴权，开着谁都能触发假警报）。"
   echo
   echo "   日志: journalctl -u ${SVC} -f     重启: systemctl restart ${SVC}"
   echo "   升级: git pull && bash deploy.sh"
 else
-  echo "❌ 启动失败，最近日志："
+  echo "❌ 启动失败或端口 ${PORT} 无应答（端口被占用？看下面日志）："
   journalctl -u "$SVC" -n 30 --no-pager
   exit 1
 fi

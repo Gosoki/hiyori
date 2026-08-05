@@ -6,6 +6,7 @@ they sort after today's and read as "tonight's late night". Everything is then i
 plain chronological order.
 """
 import datetime
+import re
 
 import httpx
 
@@ -14,13 +15,26 @@ JIKAN = "https://api.jikan.moe/v4/schedules"
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
+def _hhmm(raw):
+    """Zero-pad a broadcast time to 'HH:MM'; '' if it isn't a time at all.
+
+    Everything downstream (the 24h+ shift, the chronological sort, the frontend's
+    18:00 cutoff) compares these as plain strings, so a stray '7:05' would sort
+    after '23:00'. Normalize once, here.
+    """
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", raw or "")
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
+
+
 async def _day(client, weekday_idx):
     """[(time 'HH:MM', title)] for one weekday. `filter=<day>`; do NOT add limit."""
     r = await client.get(JIKAN, params={"filter": DAYS[weekday_idx]})
     r.raise_for_status()
     out, seen = [], set()
     for a in (r.json().get("data") or []):
-        t = ((a.get("broadcast") or {}).get("time") or "").strip()
+        if not isinstance(a, dict):
+            continue
+        t = _hhmm((a.get("broadcast") or {}).get("time"))
         title = (a.get("title_japanese") or a.get("title") or "").strip()
         key = a.get("mal_id") or (t, title)
         if t and title and key not in seen:   # Jikan sometimes lists the same anime twice
@@ -41,10 +55,7 @@ async def fetch_anime(count=24):
         tomorrow = await _day(client, tmr_i)
     rows = [{"time": t, "title": ttl} for t, ttl in today]
     for t, ttl in tomorrow:
-        try:
-            hh = int(t[:2])
-        except ValueError:
-            continue
+        hh = int(t[:2])                               # _hhmm guarantees 'HH:MM'
         if hh < 6:                                    # only next-day shows before 06:00
             rows.append({"time": f"{hh + 24:02d}:{t[3:]}", "title": ttl})   # 02:00 → 26:00
     rows.sort(key=lambda x: x["time"])                # "00:00".."29:59" sorts lexically

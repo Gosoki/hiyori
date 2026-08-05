@@ -11,6 +11,10 @@ __pycache__/
 .env.*
 !.env.example
 
+# --- Test deps (jsdom is test-only; the dashboard itself ships zero deps) ---
+node_modules/
+tests/frontend/node_modules
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db

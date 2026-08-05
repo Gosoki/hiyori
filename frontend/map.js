@@ -7,8 +7,9 @@
 //   - Okinawa (沖縄県) in a small inset box, bottom-left
 (function () {
   "use strict";
+  // Reads SCALE_CLASS from core.js — index.html loads core.js first (see the
+  // comment on the script tags; load order is the contract for these files).
   const NS = "http://www.w3.org/2000/svg";
-  const SCALE_CLASS = { 10: "i1", 20: "i2", 30: "i3", 40: "i4", 45: "i5w", 46: "i5w", 50: "i5s", 55: "i6w", 60: "i6s", 70: "i7" };
   // Southwest island chain (Okinawa + Amami + Tokara, south of ~30°N and west of
   // ~132°E) -> Okinawa inset. Far-southeast remote islets (小笠原 etc.) are dropped
   // so the main map compacts to Kyushu〜Hokkaido and fills the frame.
@@ -32,9 +33,11 @@
 
     // Split each prefecture's polygons: SW island chain -> inset, rest -> main.
     const mainFeats = [], insetFeats = [];
-    geo.features.forEach((f) => {
+    ((geo && geo.features) || []).forEach((f) => {
+      if (!f || !f.geometry || !Array.isArray(f.geometry.coordinates)) return;
       const mainPolys = [], insetPolys = [];
       f.geometry.coordinates.forEach((poly) => {
+        if (!Array.isArray(poly) || !Array.isArray(poly[0])) return;
         let maxLat = -Infinity, minLon = Infinity;
         poly[0].forEach((p) => { if (p[1] > maxLat) maxLat = p[1]; if (p[0] < minLon) minLon = p[0]; });
         const south = maxLat < NANSEI_LAT;
@@ -46,6 +49,7 @@
       if (insetPolys.length) insetFeats.push(feat(f, insetPolys));
     });
 
+    if (!mainFeats.length || !insetFeats.length) return;   // empty bbox -> NaN viewBox; skip the map
     boxMain = bbox(mainFeats);
     boxMain.minLat = Math.max(boxMain.minLat, 30.0);   // fill the bottom with Kyushu (a bit of ocean margin below)
     boxMain.maxLat += 0.5;                             // small breathing margin above Hokkaido
@@ -112,14 +116,16 @@
 
     const paths = {};
     feats.forEach((f) => {
+      const name = (f.properties && f.properties.nam_ja) || "";
+      if (!name) return;   // unnamed feature can't be matched to a 震度 anyway
       const path = document.createElementNS(NS, "path");
       path.setAttribute("d", buildPath(f.geometry.coordinates, project));
       path.setAttribute("class", "pref");
       svg.appendChild(path);
-      paths[f.properties.nam_ja] = path;
+      paths[name] = path;
       // P2P EEW pref names come WITHOUT the 県/府/都 suffix (e.g. 岩手, 大阪) while
       // the geojson uses 岩手県/大阪府 — register a stripped alias so EEW coloring works
-      paths[f.properties.nam_ja.replace(/[県府都]$/, "")] = path;
+      paths[name.replace(/[県府都]$/, "")] = path;
     });
 
     svg.appendChild(makeEpi(W));

@@ -12,12 +12,15 @@ and localize them. Japanese place names are passed through unchanged.
 import asyncio
 import datetime
 import json
+import logging
 import time
 
 import httpx
 import websockets
 
+log = logging.getLogger("hiyori.earthquake")
 P2P_HISTORY_URL = "https://api.p2pquake.net/v2/history"
+_startup = time.time()   # so offline_for() is meaningful before the first connect
 
 # JMA 震度 (shindo) scale code -> label
 # 46 = 震度5弱以上と推定 (P2P sends it when the exact intensity isn't determined yet)
@@ -45,6 +48,22 @@ def _now():
     return time.time()
 
 
+def _obj(d, key):
+    """`d[key]` when it is an object, else {}.
+
+    P2P sends explicit JSON nulls for absent sub-objects (e.g. `"issue": null`),
+    so `d.get(key, {})` still hands back None and the next `.get` blows up — and
+    an exception here would tear down the whole quake feed. Never do that.
+    """
+    v = d.get(key)
+    return v if isinstance(v, dict) else {}
+
+
+def _dicts(d, key):
+    """`d[key]` as a list of dicts, dropping nulls/scalars the feed may include."""
+    return [x for x in (d.get(key) or []) if isinstance(x, dict)]
+
+
 def _regions_from(pairs):
     """pairs: list of (group_name, scale_code). Keep max scale per group, sort desc."""
     best = {}
@@ -63,16 +82,21 @@ def _regions_from(pairs):
 
 
 def normalize_quake(msg):
-    eq = msg.get("earthquake", {}) or {}
-    hypo = eq.get("hypocenter", {}) or {}
+    eq = _obj(msg, "earthquake")
+    hypo = _obj(eq, "hypocenter")
+    issue_type = _obj(msg, "issue").get("type", "")
     regions = _regions_from(
-        (p.get("pref", ""), p.get("scale", -1)) for p in msg.get("points", []) or []
+        (p.get("pref", ""), p.get("scale", -1)) for p in _dicts(msg, "points")
     )
     return {
         "kind": "quake",
         "id": str(msg.get("id") or msg.get("_id") or ""),
-        "revision": msg.get("issue", {}).get("type", ""),
-        "issueLabel": ISSUE_LABEL.get(msg.get("issue", {}).get("type", ""), "地震情報"),
+        # Which bulletin OF THIS QUAKE this is — a 551 identifies its bulletins by
+        # type (ScalePrompt → DetailScale → …), a 556 by serial number. Different
+        # spellings, same job, and it is only ever compared for equality ("is this
+        # a report I have already shown?"), so one field covers both honestly.
+        "bulletin": issue_type,
+        "issueLabel": ISSUE_LABEL.get(issue_type, "地震情報"),
         "originTime": eq.get("time", ""),
         "hypocenter": {
             "name": hypo.get("name", "") or "調査中",
@@ -90,9 +114,10 @@ def normalize_quake(msg):
 
 
 def normalize_eew(msg):
-    eq = msg.get("earthquake", {}) or {}
-    hypo = eq.get("hypocenter", {}) or {}
-    areas = msg.get("areas", []) or []
+    eq = _obj(msg, "earthquake")
+    hypo = _obj(eq, "hypocenter")
+    issue = _obj(msg, "issue")
+    areas = _dicts(msg, "areas")
 
     def _area_scale(a):
         # scaleTo=99 means "〜程度以上" (upper bound unknown) — typical of the FIRST
@@ -105,8 +130,8 @@ def normalize_eew(msg):
     max_scale = max((r["scale"] for r in regions), default=-1)
     return {
         "kind": "eew",
-        "id": str(msg.get("issue", {}).get("eventId") or msg.get("id") or ""),
-        "revision": str(msg.get("issue", {}).get("serial", "")),
+        "id": str(issue.get("eventId") or msg.get("id") or ""),
+        "bulletin": str(issue.get("serial", "")),   # EEW serial: 第1報, 第2報 …
         "originTime": eq.get("originTime", ""),
         "hypocenter": {
             "name": hypo.get("name", "") or hypo.get("reduceName", "") or "調査中",
@@ -123,14 +148,22 @@ def normalize_eew(msg):
     }
 
 
-def _quake_key(event):
-    return event.get("originTime") or event.get("id")
+def quake_key(event):
+    """Identity of the *quake itself*, so successive bulletins (第2報, 詳報…) of one
+    quake collapse onto a single entry. Always a str, so it stays sortable."""
+    return event.get("originTime") or event.get("id") or ""
+
+
+def _event_base(event):
+    """Identity of a takeover: the quake plus its kind, matching the frontend's
+    `eventBase()`. An EEW and the 地震情報 for the same quake are separate screens."""
+    return f"{event.get('kind', '')}:{quake_key(event)}"
 
 
 def _merge_recent(recent, event, cap):
     """Prepend a live quake, replacing an earlier bulletin of the same quake."""
-    key = _quake_key(event)
-    merged = [e for e in recent if _quake_key(e) != key]
+    key = quake_key(event)
+    merged = [e for e in recent if quake_key(e) != key]
     merged.insert(0, event)
     return merged[:cap]
 
@@ -147,9 +180,14 @@ async def fetch_recent_quakes(n=5):
         r.raise_for_status()
         data = r.json()
     out, seen = [], set()
-    for msg in data:                       # newest first; first bulletin per quake wins
-        event = normalize_quake(msg)
-        key = _quake_key(event)
+    for msg in data if isinstance(data, list) else []:   # newest first; first bulletin per quake wins
+        if not isinstance(msg, dict):
+            continue
+        try:
+            event = normalize_quake(msg)
+        except Exception:
+            continue                       # one bad row must not lose the whole history
+        key = quake_key(event)
         if key in seen:
             continue
         seen.add(key)
@@ -170,11 +208,36 @@ class EarthquakeService:
         self.recent_cap = recent_cap
         self.current = None               # active event (with receivedAt / expiresAt)
         self.recent = []                  # last N 地震情報 (newest first), for 🗾 browsing
+        # --- connection health, surfaced by /api/health and the tablets' 🗾 badge ---
+        self.connected = False
+        self.connected_since = 0.0
+        self.last_message = 0.0           # any frame, not just a quake — proof of life
+        self.reconnects = 0
+        self.last_error = ""
 
     def active(self):
-        if self.current and self.current["expiresAt"] > _now():
+        if self.current and self.current.get("expiresAt", 0) > _now():
             return self.current
         return None
+
+    def offline_for(self):
+        """Seconds the live feed has been down, 0 while connected.
+
+        Measured from the last *successful connection*, not the last quake: Japan
+        can be quiet for hours, so silence alone proves nothing.
+        """
+        if self.connected:
+            return 0.0
+        return _now() - (self.connected_since or _startup)
+
+    def status(self):
+        return {
+            "connected": self.connected,
+            "offlineFor": round(self.offline_for()),
+            "lastMessageAge": round(_now() - self.last_message) if self.last_message else None,
+            "reconnects": self.reconnects,
+            "lastError": self.last_error,
+        }
 
     async def run(self):
         while True:
@@ -183,12 +246,26 @@ class EarthquakeService:
                     self.url, ping_interval=30, ping_timeout=20,
                     open_timeout=15, max_queue=64,
                 ) as ws:
+                    self.connected = True
+                    self.connected_since = _now()
+                    self.last_error = ""
+                    if self.reconnects:
+                        log.warning("P2P quake feed reconnected (attempt %d)", self.reconnects)
+                    else:
+                        log.info("P2P quake feed connected")
                     async for raw in ws:
+                        self.last_message = _now()
                         await self._handle(raw)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                pass
+            except Exception as e:
+                self.last_error = f"{type(e).__name__}: {e}"[:200]
+            was_connected, self.connected = self.connected, False
+            self.reconnects += 1
+            if was_connected:
+                # Only the transition, so a long outage doesn't fill the journal.
+                log.warning("P2P quake feed lost (%s); retrying every 5s",
+                            self.last_error or "server closed the connection")
             # unconditional: a graceful server close exits the `async with` without
             # raising, which would otherwise reconnect in a tight loop
             await asyncio.sleep(5)
@@ -198,16 +275,31 @@ class EarthquakeService:
             msg = json.loads(raw)
         except (ValueError, TypeError):
             return
-        code = msg.get("code")
-        if code == 551:
-            event = normalize_quake(msg)
-        elif code == 556:
-            if msg.get("test") and not self.show_test:
-                return
-            event = normalize_eew(msg)
-        else:
+        if not isinstance(msg, dict):
             return
+        code = msg.get("code")
+        try:
+            if code == 551:
+                event = normalize_quake(msg)
+            elif code == 556:
+                if msg.get("test") and not self.show_test:
+                    return
+                event = normalize_eew(msg)
+            else:
+                return
+        except Exception:
+            # One weird bulletin must not propagate to run()'s reconnect handler:
+            # that would drop the feed for 5s — exactly when quakes come in bursts.
+            return
+        await self.publish(event)
 
+    async def publish(self, event, source="p2p"):
+        """Stamp an event with its hold window, fold it into the 🗾 list, broadcast.
+
+        Shared by the live P2P socket and the JMA fallback poller, so both sources
+        produce identical behaviour on the tablets.
+        """
+        event.setdefault("source", source)
         now = _now()
         event["receivedAt"] = datetime.datetime.now(
             datetime.timezone(datetime.timedelta(hours=9))
@@ -219,7 +311,24 @@ class EarthquakeService:
         if event["kind"] == "quake":
             self.recent = _merge_recent(self.recent, event, self.recent_cap)
 
+        if event.get("cancelled"):
+            # A cancellation retracts the event it refers to — it must not blank an
+            # unrelated takeover that happens to still be active (the frontend
+            # already scopes it this way; keep /api/earthquake/current in step).
+            if self.current and _event_base(self.current) == _event_base(event):
+                self.current = None
+        else:
+            self.current = event
+
         # Broadcast every event; each device decides — by its own 震度 threshold —
         # whether to take over the full screen (the filter lives in the frontend).
-        self.current = None if event.get("cancelled") else event
         await self.on_event(event)
+
+    def knows(self, event):
+        """Have we already reported this quake (from either source)?
+
+        The fallback uses this so a quake P2P delivered before it went down doesn't
+        get replayed as breaking news when JMA reports the same one a minute later.
+        """
+        key = quake_key(event)
+        return bool(key) and any(quake_key(e) == key for e in self.recent)

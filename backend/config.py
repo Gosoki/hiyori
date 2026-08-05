@@ -65,6 +65,17 @@ ALERT_MAX = 3
 
 # --- Earthquake (P2P地震情報 v2 WebSocket, free, no key) ---------------------
 P2P_WS_URL = "wss://api.p2pquake.net/v2/ws"
+
+# Backup 地震情報 source (気象庁 XML feed, free, no key). P2P is a single point of
+# failure for the one feature here that actually matters, so when its WebSocket has
+# been down for EARTHQUAKE_FALLBACK_AFTER seconds the backend starts polling JMA
+# directly. It is a safety net, not a replacement: polling lags the push by up to a
+# minute and JMA's public feed carries no EEW, so 緊急地震速報 is unavailable while
+# P2P is down. The 🗾 button turns amber on every tablet whenever this is in play.
+# Set EARTHQUAKE_FALLBACK_AFTER = 0 to disable the fallback entirely.
+JMA_QUAKE_FEED = "https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml"
+EARTHQUAKE_FALLBACK_AFTER = 300   # P2P silent this long (s) → start polling JMA
+EARTHQUAKE_FALLBACK_POLL = 60     # how often to poll JMA while P2P is down (s)
 EARTHQUAKE_HOLD_SECONDS = 90    # keep the earthquake screen for 90 seconds
 EARTHQUAKE_SHOW_TEST = False    # show EEW drill (訓練) messages as full-screen?
 EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets you browse
@@ -74,13 +85,27 @@ EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets yo
 # An EEW whose predicted intensity is still unknown (-1) full-screens regardless.
 EARTHQUAKE_MIN_SCALE = 30
 
+# Cap on simultaneously connected tablets. Each open /ws socket is one entry in a
+# set and one recipient per alert; a handful of wall screens is the intended scale.
+# The limit exists so a runaway/looping client can't grow the set without bound.
+MAX_WS_CLIENTS = 32
+
 # --- UI ---------------------------------------------------------------------
 DEFAULT_LANGUAGE = "ja"   # ja / zh / en (UI chrome only; content stays in its source language). Each device can override.
 
 # --- Demo -------------------------------------------------------------------
 # When True, /api/demo/quake and /api/demo/eew inject a sample event so you can
-# preview the earthquake screen. Turn off in production if you like.
-ENABLE_DEMO = True
+# preview the earthquake screen.
+#
+# OFF by default, deliberately. Those routes are unauthenticated GETs: anyone who
+# can reach the port — and any link prefetch, browser speculative navigation or
+# crawler that happens across the URL — can put a fake full-screen earthquake alert
+# on every tablet. False alarms are how people learn to ignore real ones, and the
+# alert is the only part of this dashboard that can actually matter.
+#
+# Flip to True while you set the wall screen up, look at the takeover, flip it back.
+# While it is on, the backend logs a WARNING on every start so you don't forget.
+ENABLE_DEMO = False
 
 # --- Hourly forecast (met.no / yr.no, free, no key; needs a User-Agent) -----
 HOURLY_REFRESH = 1800   # hourly forecast refreshed every 30 min
