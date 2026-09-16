@@ -49,7 +49,13 @@ echo "✔ uv $(uv --version)"
 # ---- 3. 虚拟环境 + 依赖（uv 下载独立 CPython，与系统 python 版本无关）----
 cd "$BACKEND"
 uv python install "$PYVER"
-uv venv --python "$PYVER"
+# 【只在没有 venv、或它的 Python 版本不对时才重建】`uv venv` 会把已有目录整个换掉——
+# 升级路径 git pull && bash deploy.sh 每次都这么干，等于在正在运行的服务脚下抽掉
+# site-packages；而依赖有变化时 uv pip install 装进现有环境就够了。真要重建先停服务。
+if [ ! -x "$BACKEND/.venv/bin/python" ] || ! "$BACKEND/.venv/bin/python" -V 2>/dev/null | grep -q " $PYVER"; then
+  systemctl stop "$SVC" 2>/dev/null || true
+  uv venv --clear --python "$PYVER"
+fi
 uv pip install -r requirements.txt
 
 PY="$BACKEND/.venv/bin/python"
@@ -71,14 +77,23 @@ WorkingDirectory=$BACKEND
 ExecStart="$UVICORN" main:app --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=5
-# 只读取自己的代码 + 出网抓数据，不需要写系统任何位置。以下限制都不影响运行，
-# 但能把「万一被上游数据打穿」的后果限制住。ProtectHome 没开：仓库常放在 /root 或 /home。
+# uvicorn 的访问日志走 stdout；systemd 下 stdout 不是终端，Python 会按 8KB 块缓冲，
+# journalctl -f 里访问日志会一批一批地迟到。关掉缓冲。
+Environment=PYTHONUNBUFFERED=1
+# 只读取自己的代码 + 出网抓数据，不需要写系统任何位置，也不需要任何特权。
+# 以下限制都不影响运行，但能把「万一被上游数据打穿」的后果限制住。
+# ProtectHome 用 read-only：仓库常放在 /root 或 /home，只需要读（写不了 __pycache__ 时
+# Python 会静默跳过缓存，不报错）。
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

@@ -13,13 +13,13 @@
   - 天气：気象庁 (JMA) 今日/週間预报 + met.no (yr.no) 当天逐小时 — 点左上角地区名可切换城市(内置 12 个日本主要城市,默认東京)
   - 地震：P2P地震情報 (WebSocket) — 地震情報(551) + 緊急地震速報 EEW(556);
     **P2P 断线超过 5 分钟自动切到気象庁 XML 备用源**(仅地震情報,无 EEW),右上角 🗾 会亮琥珀色小点提示
-  - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,红色高亮,平时不显示)
+  - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,红色高亮,平时不显示;每 60 秒轮询、变化即推送到平板;其中 津波警報/特別警報/Jアラート 还会在**页面顶部拉出一条红色横幅**,3 小时内有效)
   - AI・テック：每台设备可在设置里切换 **中文**(量子位 + Solidot)/ **日本語**(ITmedia AI+)/ **Global**(Hacker News)
   - 汇率：open.er-api.com(底部小卡片,双向显示,保留小数;结果整数部分不足 1 时基数 ×10,如 `100円=4.201元`)
   - 新番：Jikan (MyAnimeList)(底部小卡片,广播日 00:00→次日 06:00 的 TV 放送,时间序,3×3 网格,傍晚 18 点后剔除已播)
   - 节日：holidays-jp(底部独立"节日"栏,"距 <假日名·红> N 天",天数客户端实时算)
 
-界面默认日语，点左上角地区名打开设置，可切换 城市 / AI ソース / 语言(日本語・中文・English) / **地震全屏最小震度**(3+/4+/5弱+) / 全屏开关（均每台设备各自记忆）。低于阈值的小地震不抢屏，只进 🗾 列表。
+界面默认日语，点左上角地区名打开设置，可切换 城市 / AI ソース / 语言(日本語・中文・English) / **地震全屏最小震度**(3+/4+/5弱+) / **夜间减光**(23〜6 时把面板调暗,地震占屏不受影响) / 全屏开关（均每台设备各自记忆）。低于阈值的小地震不抢屏，只进 🗾 列表——**但带津波警報/大津波警報的地震不看阈值,一律占屏**。设置面板 60 秒无操作自动关闭,点空白处也能关,且永远压不住地震占屏。
 
 ---
 
@@ -74,10 +74,14 @@ sudo systemctl enable --now hiyori
 用 Chrome 或 Edge 全屏打开后端地址即可。新建一个快捷方式，目标填：
 
 ```
-chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs --disable-pinch --overscroll-history-navigation=0
+chrome.exe --kiosk --app=http://<linux机器IP>:12345 --user-data-dir=C:\hiyori-kiosk --noerrdialogs --disable-pinch --overscroll-history-navigation=0
 ```
 
 （Edge 把 `chrome.exe` 换成 `msedge.exe`，其余相同。）
+
+> **别加 `--incognito`。** 每台设备的设置（城市 / AI 源 / 语言 / **地震全屏最小震度** / 夜间减光）
+> 都存在浏览器的 localStorage 里；无痕模式在窗口关闭（也就是每次平板重启）时全部丢弃，
+> 你设好的 5弱+ 第二天就悄悄变回服务器默认值。`--user-data-dir` 给它一个独立、持久的配置目录。
 
 把该快捷方式放进「启动」文件夹（`Win+R` → `shell:startup`）即可开机自动全屏显示。
 关闭平板的休眠/锁屏（设置 → 电源和睡眠 → 屏幕/睡眠：从不）。
@@ -111,7 +115,7 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs
 | 切换城市 / AI 源 | 平板上点左上角地区名进设置选(每台设备各自记忆);默认值改 `DEFAULT_CITY` / `DEFAULT_AI_SOURCE` |
 | 增删城市 | 改 `config.py` 的 `CITIES` 列表(加一行:id / 名称 / JMA `area_code` `class10_code` / 经纬度,码见 [JMA area.json](https://www.jma.go.jp/bosai/common/const/area.json)) |
 | 增删 AI 源分组 | 改 `AI_SOURCES`(加一组:id / 显示名 / mode / feeds);主要ニュース源改 `NEWS_JAPAN` |
-| 严重灾害警报关键词 | `ALERT_KEYWORDS`(想收台风/暴风就加 `"台風"` `"暴風"`);`ALERT_FEED` 为 NERV 源 |
+| 严重灾害警报关键词 | `ALERT_KEYWORDS`(想收台风/暴风就加 `"台風"` `"暴風"`);`ALERT_FEED` 为 NERV 源;`ALERT_REFRESH` 为轮询间隔(默认 60 秒,条件请求,变化即推送) |
 | 地震全屏保持时长 | `EARTHQUAKE_HOLD_SECONDS`（默认 90 秒） |
 | 全屏最小震度(默认值) | `EARTHQUAKE_MIN_SCALE`（默认 30=震度3；每台设备可在设置里改。10=1 40=4 45=5弱…） |
 | 汇率货币对 | `FX_BASE` / `FX_QUOTE`（币种代码,如 CNY/JPY）+ `FX_BASE_LABEL` / `FX_QUOTE_LABEL`（显示名,如 元/円） |
@@ -139,7 +143,7 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs
 
 | 方法 · 路径 | 说明 |
 |---|---|
-| `GET /api/health` | **各上游存活状态**(每路数据源的成功/失败/陈旧秒数 + 地震长连接状态)。见下 |
+| `GET /api/health` | **各上游存活状态**(每路数据源的成功/失败/陈旧秒数、`stale` 标记 + 地震长连接状态)。见下 |
 | `GET /api/config` | 前端启动默认值:语言 / 城市 / AI 源 / 地震全屏阈值 / 🗾 列表条数 |
 | `GET /api/cities` | 可选城市列表 `[{id,name}]` |
 | `GET /api/ai-sources` | 可选 AI 源分组 `[{id,name,lang}]` |
@@ -169,9 +173,13 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --incognito --noerrdialogs
   "quake": { "connected": true, "offlineFor": 0, "reconnects": 0,
              "fallbackActive": false },   // fallbackActive=已切到気象庁备用源
   "feeds": { "weather": { "ok": true, "lastOkAge": 42, "consecutiveFails": 0,
-                          "lastError": "" }, /* … */ }
+                          "lastError": "", "staleAfter": 1800, "stale": false }, /* … */ }
 }
 ```
+
+`stale` = 这路数据上一次成功距今已超过 `staleAfter` 秒(三个刷新周期)。平板据此把对应面板
+**调暗并打上「更新停止」角标**——数据还是最后一份好的(设计如此),但看的人能分清
+「今天没新闻」和「这一栏三小时前就停了」。从未成功过的数据源不算 stale,面板上是它自己的占位文案。
 
 数据源失败/恢复时后端会往 `journalctl -u hiyori` 打一条 WARNING(**只在状态变化时打**,
 长时间故障不会刷屏)。平板上则表现为右上角 🗾 出现小圆点:琥珀=正在用備用地震源、红=完全收不到地震信息。
@@ -194,6 +202,21 @@ ws://<IP>:12345/ws
 
 `bulletin` = 同一次地震的**第几报**——551 用报文类型(`ScalePrompt`→`DetailScale`…),556 用序号(第1報/第2報)。写法不同但作用一样,只用于相等比较("这条我是不是已经显示过了")。
 `source` = `p2p` 或 `jma`(备用源)。完整字段见 `backend/earthquake.py` 的 `normalize_quake` / `normalize_eew`。
+连接时补推的事件 `holdFor` 是**剩余**秒数(与 `/api/earthquake/current` 一致),不是整段保持时长。
+
+同一条连接上还有两种消息:
+
+```json
+{ "type": "alerts", "items": [ { "title": "【津波警報】…", "source": "NERV", "alert": true } ] }
+{ "type": "ping" }
+```
+
+- `alerts`:NERV 严重灾害警报(津波/特別警報/Jアラート…)集合**发生变化**时推送。
+  后端每 `ALERT_REFRESH`(60 秒)条件轮询一次 NERV,不再跟着 5 分钟的新闻循环走——
+  以前一条海啸警报要等新闻循环 + 平板 5 分钟轮询,最坏约 10 分钟才上墙,现在约 1 分钟。
+  平板收到后立刻重取 `/api/news`(警报置顶在主要ニュース栏,`/api/news` 在请求时合成,不等新闻刷新)。
+- `ping`:每 25 秒一次的心跳。浏览器自己发现不了半开的 WebSocket(Wi-Fi 闪断后 readyState 仍是 OPEN、
+  却什么都收不到,包括下一条緊急地震速報);平板连续 3 次没收到心跳就主动重连,服务端连接时会补推仍在保持期内的事件。
 
 ---
 
@@ -224,17 +247,18 @@ hiyori/
 │   ├── app.js             设置面板 + 事件绑定 + init（**必须最后加载**）
 │   ├── map.js              自绘日本地图（SVG，震源+震度上色）
 │   ├── i18n.js             多语言文案
-│   └── japan.geo.json      47 都道府县边界（已生成，602KB，传输时 gzip 到 ~90KB）
+│   └── japan.geo.json      47 都道府县边界（已生成，~200KB，传输时 gzip 到 ~40KB）
 ├── tests/                  见 tests/README.md（离线单测 + `-m live` 契约测试）
 └── tools/
     └── build_map.py        从 dataofjapan/land 生成 japan.geo.json（一般无需再跑）
 ```
 
 > 前端拆成多个 `<script>` 但**没有引入任何构建步骤或模块加载器**——它们共享一个全局作用域，
-> 所以 `index.html` 里的**加载顺序就是唯一的契约**：`core.js` 最先（共享状态），
+> 所以 `index.html` 里的**加载顺序就是唯一的契约**：`i18n.js`、`core.js` 最先（文案与共享状态），
 > `app.js` 最后（唯一有顶层执行代码的文件）。改动时别打乱顺序。
 
-> 地图数据来自 [dataofjapan/land](https://github.com/dataofjapan/land)（MIT），已简化为 2 位小数精度（~1km，仪表盘尺度下无差别）。想改精度重新生成：`python3 tools/build_map.py`。
+> 地图数据来自 [dataofjapan/land](https://github.com/dataofjapan/land)（MIT），已做 Douglas–Peucker 简化（容差 0.006°≈半个像素，比都道府县描边还细）并剔除亚像素小岛，
+> 再取 2 位小数：4 万点 → 1.3 万点，地震屏首次栅格化的工作量降到三分之一，肉眼无差别。想改精度重新生成：`python3 tools/build_map.py`（参数在文件顶部）。
 
 ---
 
