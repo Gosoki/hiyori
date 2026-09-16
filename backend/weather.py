@@ -3,6 +3,8 @@ import datetime
 
 import httpx
 
+from condget import get_if_changed
+
 FORECAST_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/{area}.json"
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -139,8 +141,11 @@ async def fetch_weather(cfg, weekly_count=6):
     return result
 
 
-def _parse(data, cfg):
-    today = datetime.datetime.now(JST).date().isoformat()
+def _parse(data, cfg, today=None):
+    """`today` (ISO date, JST) is injectable so a captured response can be parsed
+    as of the day it was captured — otherwise every fixture goes stale the day
+    after it is recorded, and the weekly strip "empties" for no real reason."""
+    today = today or datetime.datetime.now(JST).date().isoformat()
     short = data[0]
     ts = short["timeSeries"]
 
@@ -270,13 +275,32 @@ def _met_icon(sym, hour):
     return ("❓", "—")
 
 
+# met.no's terms ask polling clients to send If-Modified-Since (they hand back
+# Last-Modified/Expires on every response) and throttle those that don't. Keep the
+# validators and the last body per city; a 304 re-slices the cached forecast for
+# the current hour instead of downloading ~200 KB again.
+_met_cache = {}   # city id -> {"cond": {...}, "data": raw json}
+
+
 async def fetch_hourly(cfg, count=12, step=1):
     """`count` forecast points from the current hour, every `step` hours (rolling;
     may cross midnight). e.g. count=12, step=2 → a full day at 2-hour intervals."""
-    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": MET_UA}) as client:
-        r = await client.get(MET_URL, params={"lat": cfg["lat"], "lon": cfg["lon"]})
-        r.raise_for_status()
-        data = r.json()
+    entry = _met_cache.setdefault(cfg["id"], {"cond": {}, "data": None})
+    async with httpx.AsyncClient(timeout=15, headers={"User-Agent": MET_UA},
+                                 params={"lat": cfg["lat"], "lon": cfg["lon"]}) as client:
+        r = await get_if_changed(client, MET_URL, entry["cond"])
+    if r is None:                        # 304: the forecast we have is still current
+        if entry["data"] is None:        # validators but no body (a previous parse failed): start over
+            entry["cond"].clear()
+            raise ValueError("met.no answered 304 but no forecast is cached")
+        data = entry["data"]
+    else:
+        try:
+            data = r.json()
+        except ValueError:
+            entry["cond"].clear()        # don't let a 304 next time stand in for a body we never had
+            raise
+        entry["data"] = data
     cur = datetime.datetime.now(JST).replace(minute=0, second=0, microsecond=0)
     out = []
     for e in data["properties"]["timeseries"]:

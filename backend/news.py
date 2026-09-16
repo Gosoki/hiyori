@@ -6,6 +6,8 @@ import re
 import feedparser
 import httpx
 
+from condget import get_if_changed
+
 UA = {"User-Agent": "hiyori/1.0"}
 
 
@@ -101,15 +103,29 @@ async def fetch_news(feeds_by_category, max_per_category):
     return result
 
 
-async def fetch_alerts(feed_url, keywords, max_n):
+async def fetch_alerts(feed_url, keywords, max_n, cond=None, banner_keywords=()):
     """Severe real-time disaster alerts from NERV (特務機関NERV). NERV posts every
     prefecture's routine advisory too, so we keep only titles containing a severe
-    keyword — usually nothing, which is the point."""
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=UA) as client:
+    keyword — usually nothing, which is the point.
+
+    Network/HTTP failures propagate: the caller (main.alert_loop) records them in
+    /api/health, because "NERV is unreachable" must not look like "all quiet".
+
+    `cond` is an optional per-URL dict for conditional GET (see condget.py). With
+    it, an unchanged feed answers 304 and this returns None — "same as last time",
+    which is NOT the same as [] ("checked, nothing severe").
+
+    Items whose full text matches one of `banner_keywords` — and that are not
+    announcing a lift (解除) — are flagged `banner: True` for the tablets' banner.
+    """
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=UA) as client:
+        if cond is None:
             parsed = await _parse_feed(client, feed_url)
-    except Exception:
-        return []
+        else:
+            r = await get_if_changed(client, feed_url, cond)
+            if r is None:
+                return None
+            parsed = await asyncio.to_thread(feedparser.parse, r.content)
     out = []
     seen = set()
     for e in parsed.entries:                       # NERV RSS is newest-first
@@ -139,6 +155,7 @@ async def fetch_alerts(feed_url, keywords, max_n):
             "source": "NERV",
             "ts": _timestamp(e),
             "alert": True,
+            "banner": any(k in headline for k in banner_keywords) and "解除" not in headline,
         })
         if len(out) >= max_n:
             break

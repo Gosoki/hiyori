@@ -66,6 +66,7 @@ def test_cold_start_returns_an_empty_shape_not_an_error(client, url, empty):
 def test_widgets_serve_seeded_state(client):
     main.latest["fx"] = {"base": "CNY", "quote": "JPY", "rate": 23.3}
     main.latest["anime"] = [{"time": "21:00", "title": "x"}]
+    main.latest["anime_day"] = main.datetime.datetime.now(main.JST).date().isoformat()
     main.latest["holiday"] = [{"date": "2026-08-11", "name": "山の日"}]
     assert get(client, "/api/fx").json()["rate"] == 23.3
     assert get(client, "/api/anime").json()[0]["time"] == "21:00"

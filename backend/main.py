@@ -9,6 +9,13 @@ from contextlib import asynccontextmanager
 
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
+# uvicorn configures only its own loggers; without this the "hiyori.*" loggers have
+# no handler, so their INFO lines (P2P connected, JMA fallback stood down, …) never
+# reach journald and only WARNING+ leak out through logging's last-resort handler.
+# basicConfig is a no-op when the root logger already has handlers (pytest, an
+# embedding app), so it is safe to run at import.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
+
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,7 +36,7 @@ STARTED_AT = time.time()
 
 # Latest value from each singleton background loop (one global result, not per-key —
 # those live in the Feed caches below).
-latest = {"japan": None, "fx": None, "anime": None, "holiday": None}
+latest = {"japan": None, "alerts": None, "fx": None, "anime": None, "anime_day": None, "holiday": None}
 clients = set()   # connected frontend WebSockets
 
 
@@ -42,10 +49,17 @@ clients = set()   # connected frontend WebSockets
 # and "everything is fine" look identical from the outside.
 # ---------------------------------------------------------------------------
 class FeedHealth:
-    """Success/failure bookkeeping for one upstream, behind /api/health."""
+    """Success/failure bookkeeping for one upstream, behind /api/health.
 
-    def __init__(self, name):
+    `stale_after` (seconds) is how old the last success may get before the tablets
+    should say so on the panel itself: a feed that has been failing for hours is
+    not "degraded" in any way a viewer can see — the panel just keeps showing the
+    last good data — so the age has to be judged here and surfaced as `stale`.
+    """
+
+    def __init__(self, name, stale_after=None):
         self.name = name
+        self.stale_after = stale_after
         self.last_ok = 0.0
         self.last_error = ""
         self.last_error_ts = 0.0
@@ -69,9 +83,14 @@ class FeedHealth:
             log.warning("%s: upstream failed (%s)", self.name, self.last_error)
 
     def report(self):
+        age = round(time.time() - self.last_ok) if self.last_ok else None
         return {
             "ok": self.fails == 0 and self.successes > 0,
-            "lastOkAge": round(time.time() - self.last_ok) if self.last_ok else None,
+            "lastOkAge": age,
+            "staleAfter": self.stale_after,
+            # Only ever true for a feed that HAS succeeded before: a panel that never
+            # got data shows its own loading/error placeholder instead.
+            "stale": bool(self.stale_after and age is not None and age > self.stale_after),
             "consecutiveFails": self.fails,
             "lastError": self.last_error,
             "lastErrorAge": round(time.time() - self.last_error_ts) if self.last_error_ts else None,
@@ -80,9 +99,22 @@ class FeedHealth:
 
 HEALTH = {}
 
+# How long a feed's last-good data may age before the panel is flagged stale: three
+# missed refreshes. Keyed feeds (weather, news.ai) get 3×ttl from Feed itself.
+STALE_AFTER = {
+    "news.japan": 3 * config.NEWS_REFRESH,
+    "fx": 3 * config.FX_REFRESH,
+    "anime": 3 * config.ANIME_REFRESH,
+    "holiday": 3 * config.HOLIDAY_REFRESH,
+    "earthquake.history": 3 * 1800,
+}
 
-def health(name):
-    return HEALTH.setdefault(name, FeedHealth(name))
+
+def health(name, stale_after=None):
+    h = HEALTH.get(name)
+    if h is None:
+        h = HEALTH[name] = FeedHealth(name, STALE_AFTER.get(name) if stale_after is None else stale_after)
+    return h
 
 
 FAIL_COOLDOWN = 30   # after a failure, don't re-hit a sick upstream for this long
@@ -109,7 +141,7 @@ class Feed:
         self.cache = {}      # key -> {"data": ..., "ts": ...}
         self.locks = {}      # key -> Lock, collapses concurrent misses into one fetch
         self.fail_ts = {}    # key -> when the last attempt failed
-        self.health = health(name)
+        self.health = health(name, stale_after=3 * ttl)
 
     def _fresh(self, key):
         ent = self.cache.get(key)
@@ -168,8 +200,39 @@ async def broadcast(message):
         await asyncio.gather(*(_send_or_drop(ws, message) for ws in targets))
 
 
+# Outbound messages go through one queue drained by a single task, so (a) the P2P
+# reader never waits on a tablet — publish() returns as soon as the event is queued,
+# and a wedged socket costs its SEND_TIMEOUT in the pump, not in the feed — and
+# (b) messages still reach every socket in the order they were produced, which
+# create_task-per-message would not guarantee across an EEW's rapid serials.
+outbox = asyncio.Queue()
+
+
+def enqueue(message):
+    outbox.put_nowait(message)
+
+
+async def pump_loop():
+    while True:
+        await broadcast(await outbox.get())
+
+
+HEARTBEAT = 25   # seconds between application-level pings to every tablet
+
+
+async def heartbeat_loop():
+    """Prove liveness to the tablets. A browser has no way to notice a half-open
+    WebSocket (Wi-Fi blip, AP reboot): it stays "OPEN" and silently receives
+    nothing — including the next EEW. The tablet watches for these pings and
+    reconnects when they stop; see connectWS() in frontend/quake.js."""
+    while True:
+        await asyncio.sleep(HEARTBEAT)
+        if clients:
+            enqueue({"type": "ping"})
+
+
 async def on_earthquake(event):
-    await broadcast({"type": "earthquake", "event": event})
+    enqueue({"type": "earthquake", "event": event})
 
 
 eq_service = EarthquakeService(
@@ -232,11 +295,9 @@ async def news_loop():
     while True:
         try:
             fresh = await fetch_news({"japan": config.NEWS_JAPAN}, config.NEWS_MAX_PER_CATEGORY)
-            alerts = await fetch_alerts(config.ALERT_FEED, config.ALERT_KEYWORDS, config.ALERT_MAX)
-            base = [it for it in fresh.get("japan", []) if not it.get("alert")]
-            japan = (alerts + base)[:config.NEWS_MAX_PER_CATEGORY]
+            japan = [it for it in fresh.get("japan", []) if not it.get("alert")]
             if japan:                      # keep last-good if the feed blipped
-                latest["japan"] = japan
+                latest["japan"] = japan    # severe alerts are merged in at request time
                 health("news.japan").succeeded()
             else:
                 health("news.japan").failed(None)
@@ -244,6 +305,51 @@ async def news_loop():
             health("news.japan").failed(e)
         await ai_news(config.DEFAULT_AI_SOURCE)   # keep the default source warm
         await asyncio.sleep(config.NEWS_REFRESH)
+
+
+def japan_column():
+    """主要ニュース as served: severe alerts pinned first, then Google News Top."""
+    alerts = latest["alerts"] or []
+    return (alerts + (latest["japan"] or []))[:config.NEWS_MAX_PER_CATEGORY]
+
+
+def _alert_keys(items):
+    return [it.get("title", "") for it in items]
+
+
+async def refresh_alerts(cond):
+    """One poll of the NERV feed. Returns True when the set of severe alerts changed.
+
+    Kept separate from the news loop, on a faster clock, because this is the
+    tsunami / 特別警報 / Jアラート path: the news column refreshing every five
+    minutes (and the tablets polling it every five) is fine for headlines and far
+    too slow for "leave the coast now". A change is pushed to every tablet at once.
+    """
+    try:
+        fresh = await fetch_alerts(config.ALERT_FEED, config.ALERT_KEYWORDS, config.ALERT_MAX,
+                                   cond=cond, banner_keywords=config.ALERT_BANNER_KEYWORDS)
+    except Exception as e:
+        health("alerts").failed(e)
+        return False
+    health("alerts").succeeded()
+    if fresh is None:                      # 304 — same feed as last time
+        return False
+    if _alert_keys(fresh) == _alert_keys(latest["alerts"] or []):
+        return False
+    latest["alerts"] = fresh
+    if fresh:
+        log.warning("severe alert(s) now pinned: %s", " | ".join(_alert_keys(fresh)))
+    else:
+        log.info("severe alerts cleared")
+    enqueue({"type": "alerts", "items": fresh})
+    return True
+
+
+async def alert_loop():
+    cond = {}
+    while True:
+        await refresh_alerts(cond)
+        await asyncio.sleep(config.ALERT_REFRESH)
 
 
 async def fx_loop():
@@ -269,6 +375,7 @@ async def anime_loop():
             fresh = await fetch_anime(config.ANIME_COUNT)
             if fresh:
                 latest["anime"] = fresh          # keep last good on error / empty
+                latest["anime_day"] = datetime.datetime.now(JST).date().isoformat()
                 ok = True
                 health("anime").succeeded()
             else:
@@ -312,25 +419,42 @@ async def quake_fallback_loop():
     if not config.EARTHQUAKE_FALLBACK_AFTER:
         return                                    # fallback disabled in config
     seen = set()                                  # report URLs already accounted for
+    cond = {}                                     # ETag / Last-Modified of the feed
     active = False
+    # Prime NOW — learn what JMA has already published — rather than on activation:
+    # the priming pass publishes nothing by design (a fallback that kicks in at 3am
+    # must not replay an hours-old quake), and doing it only once P2P was already
+    # silent cost a whole extra poll interval at the one moment the fallback was
+    # needed. A failure here is not an outage: the standby polls below prime later.
+    try:
+        await fetch_jma_reports(config.JMA_QUAKE_FEED, seen, limit=0, cond=cond)
+    except Exception as e:                        # noqa: BLE001
+        log.info("JMA feed not reachable at startup (%s); will prime on the next poll", e)
     while True:
-        await asyncio.sleep(config.EARTHQUAKE_FALLBACK_POLL)
+        # Standby (P2P up): still poll, rarely and conditionally, with limit=0 —
+        # mark what JMA published, download nothing, publish nothing. That keeps
+        # `seen` current, so arming never has to spend a poll learning the feed and
+        # a second outage never replays what JMA issued while P2P was fine. It also
+        # keeps the feed's health honest instead of frozen at its last outage.
+        await asyncio.sleep(config.EARTHQUAKE_FALLBACK_POLL if active else config.EARTHQUAKE_STANDBY_POLL)
         offline = eq_service.offline_for()
         if offline < config.EARTHQUAKE_FALLBACK_AFTER:
             if active:
                 log.warning("P2P is back; standing down the JMA fallback")
                 active = False
-            continue
-        if not active:
+        elif not active:
             log.warning("P2P offline for %ds — falling back to the JMA XML feed "
                         "(地震情報 only, no EEW)", round(offline))
             active = True
         try:
-            events = await fetch_jma_reports(config.JMA_QUAKE_FEED, seen)
+            events = await fetch_jma_reports(config.JMA_QUAKE_FEED, seen,
+                                             limit=3 if active else 0, cond=cond)
             health("earthquake.jma").succeeded()
         except Exception as e:
             health("earthquake.jma").failed(e)
             continue
+        if not active:
+            continue                              # P2P is the live source; we only kept `seen` current
         for event in events:
             if eq_service.knows(event):
                 continue                          # P2P already reported it before going down
@@ -375,8 +499,11 @@ async def lifespan(app):
             "Set ENABLE_DEMO = False in config.py once you have finished previewing."
         )
     tasks = [
+        asyncio.create_task(pump_loop()),
+        asyncio.create_task(heartbeat_loop()),
         asyncio.create_task(warm_loop()),
         asyncio.create_task(news_loop()),
+        asyncio.create_task(alert_loop()),
         asyncio.create_task(fx_loop()),
         asyncio.create_task(anime_loop()),
         asyncio.create_task(holiday_loop()),
@@ -417,7 +544,9 @@ app = FastAPI(
         "* The tablet frontend (SPA) is served at `/`.\n"
         "* Live earthquakes/EEW are pushed over the WebSocket at `/ws` as "
         "`{\"type\":\"earthquake\",\"event\":{…}}` — on connect, any still-active event is "
-        "replayed immediately. See the **earthquake** tag for the event shape.\n\n"
+        "replayed immediately. See the **earthquake** tag for the event shape. The same "
+        "socket carries `{\"type\":\"alerts\",\"items\":[…]}` whenever the pinned severe "
+        "alerts (NERV) change, and a `{\"type\":\"ping\"}` heartbeat every 25 s.\n\n"
         "All tunables live in `config.py`; restart the backend after editing."
     ),
     openapi_tags=TAGS_METADATA,
@@ -523,7 +652,7 @@ async def api_news(ai: str = Query(None, description="AI-source id from /api/ai-
     Google News Top with any NERV severe alerts (`alert: true`) pinned to the front.
     Both keep last-good so a flaky feed never blanks a column."""
     return {"ai": await ai_news(ai or config.DEFAULT_AI_SOURCE),
-            "japan": latest["japan"] or []}
+            "japan": japan_column()}
 
 
 @app.get("/api/fx", tags=["widgets"], summary="Exchange rate")
@@ -535,7 +664,11 @@ async def api_fx():
 @app.get("/api/anime", tags=["widgets"], summary="Today's anime schedule")
 async def api_anime():
     """Today's TV-anime broadcast list as `[{time, title}]`, chronological; late-night
-    next-day shows use 24:00–29:59 notation (or `[]` before the first fetch)."""
+    next-day shows use 24:00–29:59 notation (or `[]` before the first fetch).
+    Yesterday's list is never served as today's: if Jikan has been down across
+    midnight the answer is `[]` (stale is one thing, wrong day is another)."""
+    if latest.get("anime_day") != datetime.datetime.now(JST).date().isoformat():
+        return []
     return latest["anime"] or []
 
 
@@ -545,17 +678,25 @@ async def api_holiday():
     return latest["holiday"] or []
 
 
+def current_event():
+    """The active takeover event with `holdFor` rewritten to the REMAINING seconds,
+    or None. Both the HTTP poll and the WebSocket replay-on-connect hand out this
+    shape: a tablet that (re)connects 80 s into a 90 s hold must show the last 10 s,
+    not start a fresh 90 — clients count down on their own clock from `holdFor`."""
+    ev = eq_service.active()
+    if not ev:
+        return None
+    out = dict(ev)
+    out["holdFor"] = max(1, round(ev["expiresAt"] - time.time()))
+    return out
+
+
 @app.get("/api/earthquake/current", tags=["earthquake"], summary="Active earthquake event")
 async def api_earthquake():
     """The event currently holding the takeover screen (within its `EARTHQUAKE_HOLD_SECONDS` window), else `{}`.
     `holdFor` is rewritten to the REMAINING seconds so clients can count down on
     their own clock (robust against tablet/server clock skew)."""
-    ev = eq_service.active()
-    if not ev:
-        return {}
-    out = dict(ev)
-    out["holdFor"] = max(1, round(ev["expiresAt"] - time.time()))
-    return out
+    return current_event() or {}
 
 
 @app.get("/api/earthquake/recent", tags=["earthquake"], summary="Recent quakes (browsable)")
@@ -617,19 +758,25 @@ if config.ENABLE_DEMO:
         return {"ok": True}
 
 
+_refusing = False   # a refused tablet retries every few seconds: log the first refusal, not each
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    global _refusing
     await ws.accept()
     if len(clients) >= config.MAX_WS_CLIENTS:
         # A handful of wall screens is the intended scale; refusing past the cap
         # keeps a looping/runaway client from growing the fan-out set without bound.
-        log.warning("refusing /ws: already at MAX_WS_CLIENTS (%d)", config.MAX_WS_CLIENTS)
+        if not _refusing:
+            log.warning("refusing /ws: already at MAX_WS_CLIENTS (%d)", config.MAX_WS_CLIENTS)
+            _refusing = True
         await ws.close(code=1013)      # 1013 = try again later
         return
     clients.add(ws)
     try:
         # replay inside try/finally: a failed send must not leak the socket into `clients`
-        active = eq_service.active()
+        active = current_event()
         if active:
             await ws.send_json({"type": "earthquake", "event": active})
         while True:
@@ -644,6 +791,7 @@ async def ws_endpoint(ws: WebSocket):
         pass
     finally:
         clients.discard(ws)
+        _refusing = False              # a slot freed up; the next refusal is news again
 
 
 # Serve the static frontend last so /api and /ws take precedence.

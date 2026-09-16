@@ -19,6 +19,11 @@ def cfg():
     return config.CITIES[0]
 
 
+# The JMA fixtures were captured on this day; parse them AS OF that day, or the
+# weekly strip (which drops today and the past) empties as soon as the fixture ages.
+CAPTURED = "2026-08-05"
+
+
 # --------------------------------------------------------------------------
 # Whole-response parsing
 # --------------------------------------------------------------------------
@@ -26,7 +31,7 @@ def cfg():
 def test_parses_real_responses(city):
     import config
     cfg = next(c for c in config.CITIES if c["id"] == city)
-    out = W._parse(load_json(f"jma_forecast_{city}.json"), cfg)
+    out = W._parse(load_json(f"jma_forecast_{city}.json"), cfg, today=CAPTURED)
     assert out["city"] == cfg["city_name"]
     assert out["today"]["icon"] and out["today"]["text"]
     assert out["weekly"], "weekly strip is empty"
@@ -38,9 +43,13 @@ def test_parses_real_responses(city):
 
 
 def test_weekly_never_includes_today_or_the_past(jma_tokyo, cfg):
-    out = W._parse(jma_tokyo, cfg)
+    out = W._parse(jma_tokyo, cfg, today=CAPTURED)
+    assert out["weekly"], "fixture should yield a weekly strip as of its capture day"
+    assert all(d["date"] > CAPTURED for d in out["weekly"])
+    # and parsed as of today (the production path) it must simply not raise
+    live = W._parse(jma_tokyo, cfg)
     today = datetime.datetime.now(W.JST).date().isoformat()
-    assert all(d["date"] > today for d in out["weekly"])
+    assert all(d["date"] > today for d in live["weekly"])
 
 
 def test_full_width_spaces_are_stripped_from_the_forecast_text(jma_tokyo, cfg):
@@ -190,6 +199,9 @@ def test_hourly_respects_count_and_step(monkeypatch, cfg):
     payload = load_json("metno_tokyo.json")
 
     class Resp:
+        status_code = 200
+        headers = {}
+
         def raise_for_status(self):
             pass
 
@@ -224,3 +236,66 @@ def test_hourly_respects_count_and_step(monkeypatch, cfg):
 ])
 def test_met_icons(sym, hour, expect):
     assert W._met_icon(sym, hour)[0] == expect
+
+
+def test_hourly_polls_met_no_conditionally(monkeypatch, cfg):
+    """met.no's terms ask for If-Modified-Since; a 304 must re-slice the cached
+    forecast, never blank the strip or re-download it."""
+    import asyncio
+    payload = load_json("metno_tokyo.json")
+    calls = []
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code = code
+            self.headers = {"last-modified": "Thu, 17 Sep 2026 00:00:00 GMT"} if code == 200 else {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None, **kw):
+            calls.append(dict(headers or {}))
+            return Resp(304 if headers and headers.get("If-Modified-Since") else 200)
+
+    monkeypatch.setattr(W.httpx, "AsyncClient", lambda *a, **kw: Client())
+    first = asyncio.run(W.fetch_hourly(cfg, count=12, step=2))
+    second = asyncio.run(W.fetch_hourly(cfg, count=12, step=2))
+    assert calls[0] == {} and calls[1]["If-Modified-Since"].startswith("Thu")
+    assert second == first, "the 304 path produced a different strip"
+
+
+def test_hourly_304_without_a_cached_body_is_an_error_not_a_crash(monkeypatch, cfg):
+    import asyncio
+
+    class Resp:
+        status_code = 304
+        headers = {}
+
+        def raise_for_status(self):
+            pass
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, *a, **kw):
+            return Resp()
+
+    monkeypatch.setattr(W.httpx, "AsyncClient", lambda *a, **kw: Client())
+    W._met_cache[cfg["id"]] = {"cond": {"etag": "stale"}, "data": None}
+    with pytest.raises(ValueError):
+        asyncio.run(W.fetch_hourly(cfg))
+    assert W._met_cache[cfg["id"]]["cond"] == {}, "stale validators were kept"

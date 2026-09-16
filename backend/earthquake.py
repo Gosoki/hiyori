@@ -150,7 +150,17 @@ def normalize_eew(msg):
 
 def quake_key(event):
     """Identity of the *quake itself*, so successive bulletins (第2報, 詳報…) of one
-    quake collapse onto a single entry. Always a str, so it stays sortable."""
+    quake collapse onto a single entry. Always a str, so it stays sortable.
+
+    A 地震情報 is keyed by its origin time (P2P's `earthquake.time`, which is what
+    the JMA fallback matches on). An EEW is keyed by `issue.eventId`: JMA REVISES
+    the origin time between serials (16:27:18 → 16:27:15 in tests/fixtures/
+    p2p_556.json), so keyed by time a キャンセル報 would never match the 第1報 it
+    retracts and a dismissed 第1報 would pop straight back as 第2報.
+    Mirrored by quakeKey() in frontend/quake.js.
+    """
+    if event.get("kind") == "eew":
+        return event.get("id") or event.get("originTime") or ""
     return event.get("originTime") or event.get("id") or ""
 
 
@@ -161,10 +171,14 @@ def _event_base(event):
 
 
 def _merge_recent(recent, event, cap):
-    """Prepend a live quake, replacing an earlier bulletin of the same quake."""
+    """Fold a live quake into the browse list, replacing an earlier bulletin of the
+    same quake. Newest quake first BY ORIGIN TIME, not by arrival: bulletins of
+    two quakes interleave (A's 詳報 can land after B's), and /api/earthquake/latest
+    and the head of the 🗾 list must mean "the most recent quake"."""
     key = quake_key(event)
     merged = [e for e in recent if quake_key(e) != key]
     merged.insert(0, event)
+    merged.sort(key=lambda e: e.get("originTime") or "", reverse=True)
     return merged[:cap]
 
 
@@ -214,6 +228,8 @@ class EarthquakeService:
         self.last_message = 0.0           # any frame, not just a quake — proof of life
         self.reconnects = 0
         self.last_error = ""
+        self._announced_loss = False      # a loss was logged and no recovery yet
+        self._recovery_pending = None     # `opened` of a session whose recovery is not yet announced
 
     def active(self):
         if self.current and self.current.get("expiresAt", 0) > _now():
@@ -239,33 +255,67 @@ class EarthquakeService:
             "lastError": self.last_error,
         }
 
+    # A session counts as "held" — i.e. the feed was really up — once it has lasted
+    # this long or delivered a frame. A server that completes the handshake and
+    # drops the socket at once (overloaded, a proxy that upgrades then dies) must
+    # not reset offline_for() every 5 s: that would keep the JMA fallback from ever
+    # arming, and log a lost/reconnected pair 17,000 times a day.
+    HELD_AFTER = 60
+
+    def _mark_recovered(self, opened):
+        """The session opened at `opened` has proved itself (held HELD_AFTER seconds
+        or delivered a frame): now — not at the handshake — it counts as recovered."""
+        if self._recovery_pending == opened:
+            self._recovery_pending = None
+            self._announced_loss = False
+            log.warning("P2P quake feed reconnected (attempt %d)", self.reconnects)
+
     async def run(self):
+        self._announced_loss = False
+        self._recovery_pending = None
         while True:
+            opened, timer = 0.0, None
             try:
                 async with websockets.connect(
                     self.url, ping_interval=30, ping_timeout=20,
                     open_timeout=15, max_queue=64,
                 ) as ws:
+                    opened = _now()
                     self.connected = True
-                    self.connected_since = _now()
+                    if not self.connected_since:
+                        self.connected_since = opened            # first ever connect
                     self.last_error = ""
-                    if self.reconnects:
-                        log.warning("P2P quake feed reconnected (attempt %d)", self.reconnects)
-                    else:
+                    if self._announced_loss:
+                        # recovery is announced once the session has held, so a
+                        # server that accepts and drops does not log a recovery per flap
+                        self._recovery_pending = opened
+                        timer = asyncio.get_running_loop().call_later(
+                            self.HELD_AFTER, self._mark_recovered, opened)
+                    elif not self.reconnects:
                         log.info("P2P quake feed connected")
                     async for raw in ws:
                         self.last_message = _now()
+                        self._mark_recovered(opened)             # a frame proves the link
                         await self._handle(raw)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 self.last_error = f"{type(e).__name__}: {e}"[:200]
-            was_connected, self.connected = self.connected, False
+            finally:
+                if timer:
+                    timer.cancel()
+            self.connected = False
+            held = bool(opened) and (_now() - opened >= self.HELD_AFTER or self.last_message >= opened)
+            if held:
+                self._mark_recovered(opened)       # held but dropped before the timer fired: still a recovery
+                self.connected_since = opened      # only a session that held counts as "last time it was up"
             self.reconnects += 1
-            if was_connected:
-                # Only the transition, so a long outage doesn't fill the journal.
+            if held and not self._announced_loss:
+                # Only the transition, so a long outage (or a flapping server)
+                # doesn't fill the journal.
                 log.warning("P2P quake feed lost (%s); retrying every 5s",
                             self.last_error or "server closed the connection")
+                self._announced_loss = True
             # unconditional: a graceful server close exits the `async with` without
             # raising, which would otherwise reconnect in a tight loop
             await asyncio.sleep(5)
@@ -317,12 +367,41 @@ class EarthquakeService:
             # already scopes it this way; keep /api/earthquake/current in step).
             if self.current and _event_base(self.current) == _event_base(event):
                 self.current = None
-        else:
+        elif self._supersedes(event):
             self.current = event
 
         # Broadcast every event; each device decides — by its own 震度 threshold —
         # whether to take over the full screen (the filter lives in the frontend).
         await self.on_event(event)
+
+    def _supersedes(self, event):
+        """Should `event` become what /api/earthquake/current and the replay-on-
+        connect hand out? `current` is what a tablet that reboots, reconnects or
+        polls mid-hold gets to see, so it must stay the STRONGEST live picture:
+
+        - a follow-up of the same quake wins unless it carries no intensity — the
+          震源に関する情報 that lands between 震度速報 and 各地の震度 has maxScale -1,
+          and a 551 without intensity never takes a screen over (quake.js);
+        - a different quake only wins if it is at least as strong: a 震度2
+          aftershock 40 s into a 震度6弱 hold must not hide the big one.
+        Every bulletin still reaches the tablets live via on_event; this only
+        governs the replay/poll snapshot.
+        """
+        prev = self.active()
+        if prev is None:
+            return True
+        new_s = event.get("maxScale", -1)
+        try:
+            new_s = int(new_s)
+        except (TypeError, ValueError):
+            new_s = -1
+        if _event_base(prev) == _event_base(event):
+            return new_s >= 0
+        try:
+            old_s = int(prev.get("maxScale", -1))
+        except (TypeError, ValueError):
+            old_s = -1
+        return new_s >= old_s
 
     def knows(self, event):
         """Have we already reported this quake (from either source)?

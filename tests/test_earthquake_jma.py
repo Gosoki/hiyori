@@ -122,6 +122,116 @@ def test_second_poll_returns_only_new_reports(monkeypatch):
     assert len(out) == 1 and out[0]["kind"] == "quake"
 
 
+def test_seen_forgets_reports_that_left_the_feed(monkeypatch):
+    """`seen` is bounded by what the feed currently lists — a URL that scrolled
+    off can never come back as fresh, so keeping it only grows the set."""
+    _install_fake_http(monkeypatch)
+    seen = set()
+    asyncio.run(J.fetch_reports("feed", seen))          # prime
+    seen.add("https://example.invalid/long-gone")
+    asyncio.run(J.fetch_reports("feed", seen))
+    assert "https://example.invalid/long-gone" not in seen
+    assert seen, "pruning must never empty a set the feed still fills"
+
+
+def test_a_304_from_the_feed_means_nothing_new(monkeypatch):
+    class Resp:
+        status_code = 304
+        headers = {}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None, **kw):
+            assert headers.get("If-Modified-Since") == "x"
+            return Resp()
+
+    monkeypatch.setattr(J.httpx, "AsyncClient", lambda *a, **kw: Client())
+    seen = {"already"}
+    assert asyncio.run(J.fetch_reports("feed", seen, cond={"last_modified": "x"})) == []
+    assert seen == {"already"}, "a 304 must not touch the seen set"
+
+
+def test_a_report_whose_download_failed_is_retried_next_poll(monkeypatch):
+    """Marking a URL seen before it was fetched turned one 503 into a permanently
+    lost alert — during the exact outage the fallback exists for."""
+    feed = load_bytes("jma_eqvol_feed.xml")
+    report = load_bytes("jma_vxse53_0.xml")
+    state = {"fail": True}
+
+    class Resp:
+        def __init__(self, content):
+            self.content = content
+            self.status_code = 200
+            self.headers = {}
+
+        def raise_for_status(self):
+            pass
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, *a, **kw):
+            if url == "feed":
+                return Resp(feed)
+            if state["fail"]:
+                raise RuntimeError("503 from JMA")
+            return Resp(report)
+
+    monkeypatch.setattr(J.httpx, "AsyncClient", lambda *a, **kw: Client())
+    seen = set()
+    asyncio.run(J.fetch_reports("feed", seen))          # prime
+    target = next(u for u in list(seen) if "VXSE53" in u)
+    seen.discard(target)                                # newly published
+    assert asyncio.run(J.fetch_reports("feed", seen)) == []
+    assert target not in seen, "a failed download was marked seen"
+    state["fail"] = False
+    out = asyncio.run(J.fetch_reports("feed", seen))
+    assert len(out) == 1 and target in seen
+
+
+def test_limit_zero_only_marks_without_downloading(monkeypatch):
+    """Standby mode: keep `seen` current at zero cost while P2P is the live source."""
+    downloads = []
+    feed = load_bytes("jma_eqvol_feed.xml")
+
+    class Resp:
+        def __init__(self, content):
+            self.content = content
+            self.status_code = 200
+            self.headers = {}
+
+        def raise_for_status(self):
+            pass
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, *a, **kw):
+            if url != "feed":
+                downloads.append(url)
+            return Resp(feed if url == "feed" else b"")
+
+    monkeypatch.setattr(J.httpx, "AsyncClient", lambda *a, **kw: Client())
+    seen = set()
+    asyncio.run(J.fetch_reports("feed", seen, limit=0))        # prime
+    seen.discard(next(u for u in list(seen) if "VXSE53" in u))
+    assert asyncio.run(J.fetch_reports("feed", seen, limit=0)) == []
+    assert downloads == [] and all("VXSE53" not in u or u in seen for u in seen)
+
+
 def test_one_unreadable_report_does_not_lose_the_others(monkeypatch):
     _install_fake_http(monkeypatch, corrupt_first=True)
     seen = set()

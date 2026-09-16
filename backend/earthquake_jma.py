@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
+from condget import get_if_changed
 from earthquake import ISSUE_LABEL, scale_label
 
 UA = {"User-Agent": "hiyori/1.0"}
@@ -170,17 +171,26 @@ def parse_report(xml_bytes):
     }
 
 
-async def fetch_reports(feed_url, seen, limit=3):
+async def fetch_reports(feed_url, seen, limit=3, cond=None):
     """Newest 地震情報 from JMA's feed that aren't in `seen` (a set of report URLs).
 
     `seen` is updated in place. Returns oldest-first so callers can publish them in
     the order they happened. Feed and report fetches are independent: one unreadable
     report is skipped rather than losing the rest.
+
+    `cond` (optional dict) enables conditional GET on the feed: JMA republishes
+    eqvol.xml every few minutes at most, and it is ~500 KB, so while we poll it
+    every minute most polls come back as a 304 and cost nothing.
     """
     out = []
     async with httpx.AsyncClient(timeout=20, headers=UA, follow_redirects=True) as client:
-        r = await client.get(feed_url)
-        r.raise_for_status()
+        if cond is None:
+            r = await client.get(feed_url)
+            r.raise_for_status()
+        else:
+            r = await get_if_changed(client, feed_url, cond)
+            if r is None:                 # 304: nothing new since the last poll
+                return []
         feed = ET.fromstring(r.content)
 
         links = [e.find(ATOM + "link").get("href")
@@ -192,14 +202,29 @@ async def fetch_reports(feed_url, seen, limit=3):
         # otherwise a fallback that kicks in at 3am would take the screen over for a
         # quake that happened hours ago.
         priming = not seen
-        seen.update(links)
+        # Everything except the reports we are about to download counts as seen.
+        # The fresh ones are added only once their download succeeded: a 503 on the
+        # one report that matters would otherwise mark it seen and never retry —
+        # a silently lost alert during the very outage the fallback exists for.
+        seen.update(u for u in links if u not in fresh)
+        # Forget URLs that have scrolled off the feed: they can never come back as
+        # "fresh", and without this the set grows for as long as the fallback runs.
+        # (Only when the feed actually listed something — an empty feed must not
+        # empty `seen` and turn the next poll into a replay-everything priming pass.)
+        if links:
+            seen.intersection_update(links)
         if priming:
+            seen.update(fresh)
             return []
 
         for url in reversed(fresh):       # oldest first
             try:
                 rep = await client.get(url)
                 rep.raise_for_status()
+            except Exception:
+                continue                  # left unseen on purpose: the next poll retries it
+            seen.add(url)                 # downloaded — a parse failure is deterministic, don't retry
+            try:
                 event = parse_report(rep.content)
             except Exception:
                 continue                  # one bad report must not lose the others

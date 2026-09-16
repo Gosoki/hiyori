@@ -62,5 +62,6 @@ def _clean_module_state():
     try:
         import weather
         weather._today_temp_memo.clear()
+        weather._met_cache.clear()
     except ImportError:
         pass

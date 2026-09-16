@@ -92,14 +92,51 @@ def test_quake_key_is_always_a_string():
     assert E.quake_key({"originTime": "t", "id": "a"}) == "t"   # the quake, not the bulletin
 
 
+def test_an_eew_is_keyed_by_event_id_because_jma_revises_its_origin_time(p2p_eews):
+    """In the captured feed the same eventId reports 16:27:18 in 第1報 and
+    16:27:15 in 第2報. Keyed by time, a キャンセル報 could never retract the 第1報
+    on screen, and a dismissed 第1報 would pop straight back as 第2報."""
+    by_event = {}
+    for m in p2p_eews:
+        ev = E.normalize_eew(m)
+        by_event.setdefault(ev["id"], set()).add(ev["originTime"])
+    revised = [eid for eid, times in by_event.items() if len(times) > 1]
+    assert revised, "fixture no longer shows a revised origin time — find another"
+    for m in p2p_eews:
+        ev = E.normalize_eew(m)
+        assert E.quake_key(ev) == ev["id"]
+
+
+def test_cancel_reaches_an_eew_whose_origin_time_was_revised():
+    svc, _ = make_service()
+    first = {"code": 556, "issue": {"eventId": "E9", "serial": 1},
+             "earthquake": {"originTime": "2026/08/05 16:27:18"},
+             "areas": [{"pref": "東京", "scaleTo": 55}]}
+    asyncio.run(svc._handle(json.dumps(first)))
+    assert svc.active()["kind"] == "eew"
+    cancel = {"code": 556, "cancelled": True, "issue": {"eventId": "E9", "serial": 2},
+              "earthquake": {"originTime": "2026/08/05 16:27:15"}, "areas": []}
+    asyncio.run(svc._handle(json.dumps(cancel)))
+    assert svc.active() is None, "the retraction did not reach the screen"
+
+
 def test_merge_recent_replaces_an_earlier_bulletin_of_the_same_quake():
     first = {"originTime": "T1", "bulletin": "ScalePrompt"}
     second = {"originTime": "T1", "bulletin": "DetailScale"}
-    other = {"originTime": "T2"}
+    other = {"originTime": "T0"}
     out = E._merge_recent([other, first], second, cap=5)
     assert out[0] is second
     assert first not in out
     assert other in out
+
+
+def test_merge_recent_orders_by_origin_time_not_arrival():
+    """A's 詳報 can land after B's first bulletin; "latest quake" must still be B."""
+    a, b = {"originTime": "2026/08/05 18:00:00"}, {"originTime": "2026/08/05 18:03:00"}
+    recent = E._merge_recent([], a, cap=5)
+    recent = E._merge_recent(recent, b, cap=5)
+    recent = E._merge_recent(recent, dict(a, bulletin="DetailScale"), cap=5)   # A's follow-up arrives last
+    assert [e["originTime"] for e in recent] == [b["originTime"], a["originTime"]]
 
 
 def test_merge_recent_honours_the_cap():
@@ -277,3 +314,127 @@ def test_fetch_recent_dedups_bulletins_of_one_quake(monkeypatch, p2p_quakes):
     assert len(out) <= 5
     keys = [E.quake_key(e) for e in out]
     assert len(keys) == len(set(keys)), "the same quake appears twice"
+
+
+# --------------------------------------------------------------------------
+# What a reconnecting / polling tablet gets to see
+# --------------------------------------------------------------------------
+def _q551(t, scale, issue="DetailScale", points=True):
+    return {"code": 551, "id": t, "earthquake": {"time": t, "maxScale": scale},
+            "issue": {"type": issue},
+            "points": [{"pref": "東京都", "scale": scale}] if points and scale > 0 else []}
+
+
+def test_an_intensity_less_followup_does_not_hide_the_takeover():
+    """The 震源に関する情報 between 震度速報 and 各地の震度 carries maxScale -1. A tablet
+    that reconnects in that window must still be handed the 震度 it should show."""
+    svc, _ = make_service()
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:00:00", 30, "ScalePrompt"))))
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:00:00", -1, "Destination", points=False))))
+    assert svc.active()["maxScale"] == 30
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:00:00", 40, "DetailScale"))))
+    assert svc.active()["maxScale"] == 40, "the detailed report should have replaced the prompt"
+
+
+def test_a_weaker_aftershock_does_not_hide_a_major_takeover():
+    svc, _ = make_service()
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:00:00", 55))))
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:00:40", 20))))
+    assert svc.active()["maxScale"] == 55
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:01:10", 60))))
+    assert svc.active()["maxScale"] == 60, "a stronger new quake must take over"
+
+
+def test_anything_replaces_an_expired_takeover():
+    svc, _ = make_service()
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:00:00", 55))))
+    svc.current["expiresAt"] = E._now() - 1
+    asyncio.run(svc._handle(json.dumps(_q551("2026/08/04 23:30:00", 10))))
+    assert svc.active()["maxScale"] == 10
+
+
+# --------------------------------------------------------------------------
+# A flapping upstream is not "up"
+# --------------------------------------------------------------------------
+def test_a_flapping_connection_does_not_reset_offline_for_or_spam_the_log(monkeypatch, caplog):
+    """A server that completes the handshake and drops the socket at once must not
+    read as "connected 5 s ago" forever — that would keep the JMA fallback from ever
+    arming — nor log a lost/reconnected pair every 5 seconds."""
+    import logging
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(E, "_now", lambda: clock["t"])
+
+    class Flap:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration                 # server closes right after the upgrade
+
+    monkeypatch.setattr(E.websockets, "connect", lambda *a, **kw: Flap())
+    n = {"i": 0}
+
+    async def fake_sleep(sec):
+        clock["t"] += sec
+        n["i"] += 1
+        if n["i"] >= 50:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(E.asyncio, "sleep", fake_sleep)
+    svc, _ = make_service()
+    with caplog.at_level(logging.WARNING, logger="hiyori.earthquake"):
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(svc.run())
+    assert svc.reconnects == 50
+    assert svc.offline_for() >= 200, f"offline_for pinned at {svc.offline_for()} by the flapping"
+    assert not any("lost" in r.message for r in caplog.records), "a flap was logged as an outage"
+
+
+def test_a_held_session_counts_and_the_flaps_after_it_stay_quiet(monkeypatch, caplog):
+    """One real session (two minutes up), then a server that flaps: the loss is
+    logged once, offline_for() runs from the end of the real session, and the
+    flaps neither log nor reset it."""
+    import logging
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(E, "_now", lambda: clock["t"])
+    sessions = {"n": 0}
+
+    class Sock:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            sessions["n"] += 1
+            if sessions["n"] == 1:
+                clock["t"] += 120                    # the first session genuinely held
+            raise StopAsyncIteration                 # then every connect drops at once
+
+    monkeypatch.setattr(E.websockets, "connect", lambda *a, **kw: Sock())
+    n = {"i": 0}
+
+    async def fake_sleep(sec):
+        clock["t"] += sec
+        n["i"] += 1
+        if n["i"] >= 20:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(E.asyncio, "sleep", fake_sleep)
+    svc, _ = make_service()
+    with caplog.at_level(logging.WARNING, logger="hiyori.earthquake"):
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(svc.run())
+    assert svc.offline_for() >= 19 * 5 - 1, "offline_for should run from the end of the held session"
+    assert sum("lost" in r.message for r in caplog.records) == 1
+    assert not any("reconnected" in r.message for r in caplog.records), "a flap was logged as a recovery"

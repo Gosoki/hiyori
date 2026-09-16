@@ -67,6 +67,19 @@ NEWS_MAX_PER_CATEGORY = 12   # max headlines kept per column (alerts + Google Ne
 ALERT_FEED = "https://unnerv.jp/@UN_NERV.rss"
 ALERT_KEYWORDS = ["特別警報", "津波", "緊急地震速報", "噴火", "Ｊアラート", "Jアラート", "記録的短時間大雨"]
 ALERT_MAX = 3
+# The alert feed is polled on its own clock, faster than the news, and any change is
+# pushed to the tablets over the WebSocket at once (they then refetch /api/news).
+# A tsunami warning riding along with the 5-minute news refresh — plus the tablets'
+# own 5-minute poll — could take ~10 minutes to reach the wall; this brings it to
+# about a minute. Polls are conditional (ETag/If-Modified-Since), so an unchanged
+# feed costs a few hundred bytes.
+ALERT_REFRESH = 60
+# The subset that also gets a full-width banner on the tablets (a red line in the
+# news column is invisible from across a room). Deliberately narrower than
+# ALERT_KEYWORDS: 緊急地震速報 already takes the screen over via the quake path,
+# and 記録的短時間大雨 fires several times a season. Matched against the full toot
+# text; a post announcing a lift (解除) never banners.
+ALERT_BANNER_KEYWORDS = ["大津波警報", "津波警報", "津波注意報", "特別警報", "Ｊアラート", "Jアラート", "噴火警報"]
 
 # --- Earthquake (P2P地震情報 v2 WebSocket, free, no key) ---------------------
 P2P_WS_URL = "wss://api.p2pquake.net/v2/ws"
@@ -81,7 +94,16 @@ P2P_WS_URL = "wss://api.p2pquake.net/v2/ws"
 JMA_QUAKE_FEED = "https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml"
 EARTHQUAKE_FALLBACK_AFTER = 300   # P2P silent this long (s) → start polling JMA
 EARTHQUAKE_FALLBACK_POLL = 60     # how often to poll JMA while P2P is down (s)
-EARTHQUAKE_HOLD_SECONDS = 90    # keep the earthquake screen for 90 seconds
+# While P2P is up the feed is still checked, rarely and conditionally (a 304 costs
+# a few hundred bytes), so that we always know what JMA has already published.
+# Without that, the moment the fallback arms it either has to spend a whole poll
+# interval learning the feed before it may publish, or — after a first outage —
+# replays every report JMA issued while P2P was up as a fresh full-screen alert.
+EARTHQUAKE_STANDBY_POLL = 300
+# Keep the earthquake screen this long. Keep it ABOVE 60: a tablet whose WebSocket
+# is down learns about a quake from its 60-second poll of /api/earthquake/current,
+# which only returns events still inside this window.
+EARTHQUAKE_HOLD_SECONDS = 90
 EARTHQUAKE_SHOW_TEST = False    # show EEW drill (訓練) messages as full-screen?
 EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets you browse
 # Default full-screen 震度 threshold for a new device (each device can change it in
@@ -134,7 +156,11 @@ FX_REFRESH = 21600   # 6h; open.er-api free rates only update ~once a day
 # The 新番 slot shows the broadcast day (00:00 today → 05:59 tomorrow) in time order.
 # Refreshed every 6h, aligned to 00/06/12/18 JST so the day rolls over at midnight.
 ANIME_REFRESH = 21600   # 6 hours
-ANIME_COUNT = 24        # max shows fetched (the panel then lays out up to 9 in a 3-col grid)
+# Safety cap on rows served, NOT an editorial one: the list is chronological and
+# the panel itself picks what to show (from 18:00 on, only what has not aired).
+# Cutting the tail at 24 dropped exactly the late-night 24:00–29:59 shows on a
+# busy day. A full weekday page from Jikan is ~25 shows; two of them fit here.
+ANIME_COUNT = 60
 
 # --- Japanese holidays (holidays-jp, free, no key) --------------------------
 # The 為替 slot's 3rd line counts down to the next holiday. The day count itself

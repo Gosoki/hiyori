@@ -184,7 +184,78 @@ def test_alert_filter_keeps_only_severe_titles(monkeypatch):
     assert asyncio.run(N.fetch_alerts("u", ["絶対にでてこない語"], 3)) == []
 
 
-def test_alert_fetch_failure_is_not_fatal(monkeypatch):
+def test_a_real_tsunami_warning_is_kept_and_flagged_for_the_banner(monkeypatch):
+    """The positive case the filter exists for. The fixture also carries several
+    地震情報 whose BODY says 津波の心配はありません — those must not match (the title
+    is what is scanned), or every minor quake would light the alert line."""
+    import asyncio
+    import feedparser
+    parsed = feedparser.parse(load_bytes("rss_nerv.xml"))
+
+    async def fake_parse(client, url):
+        return parsed
+
+    monkeypatch.setattr(N, "_parse_feed", fake_parse)
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(N.httpx, "AsyncClient", lambda *a, **kw: Client())
+    import config
+    out = asyncio.run(N.fetch_alerts("u", config.ALERT_KEYWORDS, 3,
+                                     banner_keywords=config.ALERT_BANNER_KEYWORDS))
+    assert out, "the 津波警報 item was not kept"
+    assert out[0]["title"].startswith("【津波警報】")
+    assert out[0]["banner"] is True and out[0]["alert"] is True
+    assert "高台" in out[0]["title"], "the toot body should be the headline, not the truncated title"
+    assert all("心配はありません" not in it["title"] for it in out)
+    # without banner keywords nothing is flagged, but the alert itself is unchanged
+    plain = asyncio.run(N.fetch_alerts("u", config.ALERT_KEYWORDS, 3))
+    assert plain[0]["title"] == out[0]["title"] and plain[0]["banner"] is False
+
+
+def test_a_lifted_warning_never_banners():
+    import asyncio
+    import feedparser
+    xml = load_bytes("rss_nerv.xml").decode("utf-8").replace(
+        "津波警報を発表しました。海岸や川の河口付近から離れ、高台などへ避難してください。",
+        "津波警報を解除しました。")
+    parsed = feedparser.parse(xml.encode("utf-8"))
+
+    async def fake_parse(client, url):
+        return parsed
+
+    import config
+    N_parse = N._parse_feed
+    N._parse_feed = fake_parse
+    try:
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        real_client = N.httpx.AsyncClient
+        N.httpx.AsyncClient = lambda *a, **kw: Client()
+        try:
+            out = asyncio.run(N.fetch_alerts("u", config.ALERT_KEYWORDS, 3,
+                                             banner_keywords=config.ALERT_BANNER_KEYWORDS))
+        finally:
+            N.httpx.AsyncClient = real_client
+    finally:
+        N._parse_feed = N_parse
+    assert out and out[0]["banner"] is False, "a 解除 post must stay a news line, not a banner"
+
+
+def test_alert_fetch_failure_propagates_so_health_can_see_it(monkeypatch):
+    """NERV being unreachable must not be indistinguishable from "all quiet":
+    fetch_alerts raises, and main.refresh_alerts turns that into a health failure
+    while keeping the last alerts (see test_push.py)."""
     import asyncio
 
     class Client:
@@ -195,7 +266,32 @@ def test_alert_fetch_failure_is_not_fatal(monkeypatch):
             return False
 
     monkeypatch.setattr(N.httpx, "AsyncClient", lambda *a, **kw: Client())
-    assert asyncio.run(N.fetch_alerts("u", ["津波"], 3)) == []
+    with pytest.raises(RuntimeError):
+        asyncio.run(N.fetch_alerts("u", ["津波"], 3))
+
+
+def test_alert_fetch_reports_an_unchanged_feed_as_none(monkeypatch):
+    """With conditional GET a 304 means "same as last time" — None, never [] (which
+    would clear a tsunami warning that is still in force)."""
+    import asyncio
+
+    class Resp:
+        status_code = 304
+        headers = {}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            assert headers.get("If-None-Match") == "abc", "validator was not sent"
+            return Resp()
+
+    monkeypatch.setattr(N.httpx, "AsyncClient", lambda *a, **kw: Client())
+    assert asyncio.run(N.fetch_alerts("u", ["津波"], 3, cond={"etag": "abc"})) is None
 
 
 def test_hashtag_stripper_is_not_quadratic():
