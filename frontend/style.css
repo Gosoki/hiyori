@@ -554,7 +554,7 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
   color: var(--text); font-size: var(--fs-md); cursor: pointer;
   margin-bottom: var(--gap);
 }
-.fs-btn:hover { border-color: var(--accent); color: var(--accent); }
+.fs-btn:hover, .fs-btn.active { border-color: var(--accent); color: var(--accent); }
 #settings-close {
   width: 100%;
   padding: clamp(8px, 1.4vmin, 18px);
