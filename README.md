@@ -67,6 +67,10 @@ WantedBy=multi-user.target
 sudo systemctl enable --now hiyori
 ```
 
+> 上面是最小可用的单元。`deploy.sh` 生成的那份**以 root 运行**（没有 `User=`），但带了
+> `ProtectHome=read-only`、清空 capabilities、限制地址族等加固；要非 root 就按这里手写，
+> 仓库别放在 `/root` 下。
+
 ---
 
 ## 2. 平板显示（Windows，浏览器 kiosk 全屏）
