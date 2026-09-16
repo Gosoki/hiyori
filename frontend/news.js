@@ -26,6 +26,46 @@ function renderNews(data) {
   const aiLang = (aiSources.find((s) => s.id === aiSrc) || {}).lang || "zh";
   if ((data.ai || []).length) fillNewsList("news-ai", data.ai, aiLang);
   if ((data.japan || []).length) fillNewsList("news-japan", data.japan, "ja");   // 主要ニュース is always Japanese
+  renderAlertBanner((data.japan || []).filter((it) => it && it.alert));
+}
+
+// The user picked another AI source: the old source's headlines — in the old
+// source's font — must not sit there looking current until the next poll lands
+// (or forever, if the new source is still cold and returns []). Show the loading
+// placeholder in the new language, and forget the "unchanged" fingerprint so the
+// next response is rendered even if it happens to be byte-identical.
+function resetAiColumn(contentLang) {
+  const ul = document.getElementById("news-ai");
+  if (!ul) return;
+  ul.lang = contentLang || "";
+  ul.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "loading";
+  li.textContent = t("noData");
+  ul.appendChild(li);
+  lastNewsText = "";
+}
+
+// ---- severe-alert banner ---------------------------------------------------
+// NERV items the backend flagged `banner` (津波警報 / 特別警報 / Jアラート…): the red
+// line in the news column is invisible from across a room, so the newest one is
+// also spread across the top of the dashboard. It clears by age — a warning stands
+// for hours, not days — or when the backend stops pinning it. No ✕ on purpose: a
+// dismissable multi-hour warning would just be re-dismissed by whoever walks past.
+const BANNER_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+let lastBannerItems = [];
+function renderAlertBanner(items) {
+  lastBannerItems = Array.isArray(items) ? items : [];
+  const el = document.getElementById("alert-banner");
+  if (!el) return;
+  const now = Date.now();
+  const live = lastBannerItems.filter((it) =>
+    it && it.banner && it.title && (!it.ts || now - Number(it.ts) * 1000 < BANNER_MAX_AGE_MS));
+  const top = live[0] || null;
+  el.textContent = top ? "⚠️ " + top.title : "";
+  el.classList.toggle("hidden", !top);
+  const dash = document.getElementById("dashboard");
+  if (dash) dash.classList.toggle("has-alert", !!top);
 }
 
 function fillNewsList(id, items, contentLang) {

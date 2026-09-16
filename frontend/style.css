@@ -66,6 +66,27 @@ html, body {
   padding: var(--gap);
 }
 
+/* ---- Severe-alert banner (NERV) ---- */
+/* One grid row that exists only while an alert is live; the panels below shrink to
+   make room. Red, big, and a slow pulse on a white wash (opacity only) so it draws
+   the eye from across the room without blinking the text itself. */
+#alert-banner {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: var(--gap);
+  padding: var(--gap) clamp(10px, 1.6vmin, 22px);
+  background: var(--danger); color: #fff;
+  border-radius: var(--radius);
+  font-size: var(--fs-lg); font-weight: 800; line-height: 1.25;
+}
+#alert-banner::after { content: ""; position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none;
+  animation: pulse-wash 2s ease-in-out infinite; }
+#dashboard.has-alert { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }   /* banner, header, weather, news, bottom */
+
+/* ---- Night dimming (Settings → 夜間減光) ---- */
+/* Dim the panels, not the container: the alert banner is a child of #dashboard and
+   must stay at full brightness, as must the earthquake overlay (outside it). */
+body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
+
 /* ---- Header ---- */
 #topbar {
   display: flex;
@@ -253,6 +274,19 @@ html, body {
    an outage should look different from a slow first load, not the same */
 .loading.is-error { color: var(--danger); }
 
+/* A panel whose feed has missed three refreshes (health says `stale`): dim its
+   content and label it. The last-good data stays — that is the design — but a
+   viewer must be able to tell "quiet day" from "this column stopped hours ago". */
+.is-stale { position: relative; }
+.is-stale > * { opacity: 0.5; }
+.is-stale::after {
+  content: attr(data-stale);
+  position: absolute; top: clamp(3px, 0.6vmin, 8px); right: clamp(5px, 0.9vmin, 12px);
+  font-size: var(--fs-xs); line-height: 1.6; padding: 0 0.6em;
+  color: var(--i3); border: 1px solid var(--i3); border-radius: 999px;
+  background: var(--bg-panel);
+}
+
 /* ============================ Bottom bar ============================ */
 /* Mirrors the weather panel: bordered outer panels holding bg-card inner cells.
    Left panel = 為替 + 祝日 (two stacked cells); right panel = 新番 grid. Both
@@ -311,7 +345,7 @@ html, body {
   position: fixed; inset: 0; z-index: 1000;
   background: #141414;
   overflow: hidden;
-  animation: quake-in 0.35s ease-out;
+  animation: quake-in 0.2s ease-out;
   /* left column (recent-quakes list stacked above the Okinawa inset) — shared metrics */
   --eq-left: clamp(8px, 1.6vmin, 22px);      /* inset from the left edge */
   --eq-bottom: clamp(10px, 2vmin, 28px);     /* inset from the bottom edge */
@@ -367,8 +401,13 @@ html, body {
   flex: 0 0 auto;
 }
 .quake-banner .quake-sub { font-size: var(--fs-sm); font-weight: 600; opacity: 0.92; }
-#quake-overlay.is-eew .quake-banner { animation: pulse 1s ease-in-out infinite; }
-@keyframes pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.4); } }
+/* EEW pulse: a white wash whose OPACITY animates (compositor-only), not a
+   `filter: brightness` on the banner itself — that repainted the text run at
+   60 fps for the whole hold on a tablet that may have no GPU acceleration. */
+.quake-banner { position: relative; }
+.quake-banner::after { content: ""; position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+#quake-overlay.is-eew .quake-banner::after { animation: pulse-wash 1s ease-in-out infinite; }
+@keyframes pulse-wash { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
 
 .quake-close {
   position: absolute;
@@ -446,8 +485,9 @@ html, body {
   padding: clamp(5px, 0.9vmin, 11px) clamp(7px, 1vmin, 13px);
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 0.6);
-  background: rgba(26, 26, 26, 0.8);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  /* near-opaque instead of a backdrop blur: five of these over a 40k-point SVG
+     with a pulsing epicentre were five blur surfaces re-read every frame */
+  background: rgba(26, 26, 26, 0.94);
   cursor: pointer;
 }
 .rq-item.active { border-color: var(--accent); background: rgba(74, 168, 255, 0.16); }
@@ -469,13 +509,15 @@ html, body {
 .japan-svg .pref.i5w { fill: var(--i5w); } .japan-svg .pref.i5s { fill: var(--i5s); }
 .japan-svg .pref.i6w { fill: var(--i6w); } .japan-svg .pref.i6s { fill: var(--i6s); }
 .japan-svg .pref.i7 { fill: var(--i7); }
-.epi-ring { fill: none; stroke: #ff4d4d; transform-box: fill-box; transform-origin: center; animation: epi-pulse 1.5s ease-out infinite; }
+.epi-ring { fill: none; stroke: #ff4d4d; transform-box: fill-box; transform-origin: center; animation: epi-pulse 1.5s ease-out infinite; will-change: transform, opacity; }
 .epi-x { stroke: #ff4d4d; stroke-linecap: round; }
 @keyframes epi-pulse { 0% { transform: scale(0.4); opacity: 1; } 100% { transform: scale(2.4); opacity: 0; } }
 
 /* ============================ Settings ============================ */
 #settings-overlay {
-  position: fixed; inset: 0; z-index: 1100;
+  /* BELOW the earthquake overlay (1000): a settings panel someone forgot to close
+     must never sit on top of an EEW. Above everything else. */
+  position: fixed; inset: 0; z-index: 900;
   background: rgba(0, 0, 0, 0.86);
   display: flex; align-items: center; justify-content: center;
 }

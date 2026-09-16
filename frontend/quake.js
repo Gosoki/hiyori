@@ -7,14 +7,16 @@
 const overlay = document.getElementById("quake-overlay");
 let quakeHideTimer = null, quakeTickTimer = null, quakeIdleTimer = null, currentQuakeKey = null;
 const MANUAL_IDLE_MS = 60 * 1000;   // auto-return a manually-opened 🗾 overlay to the dashboard if left untouched
-let manualMode = false, shownEvent = null, dismissedBase = null;
+let manualMode = false, shownEvent = null, dismissedBase = null, dismissedRank = -1;
 let recentQuakes = [];   // last N 地震情報 for the 🗾 browse list
 let recentCount = 5;     // N, from /api/config (EARTHQUAKE_RECENT_COUNT) — kept in step with the backend
 
-// Key by originTime (the quake itself), not the bulletin id — dismissing one
-// bulletin then also dismisses the same quake's follow-up reports (第2報, 詳報…).
-// Mirrors _quake_key / _event_base in backend/earthquake.py.
-const quakeKey = (ev) => (ev && (ev.originTime || ev.id)) || "";
+// Key by the quake itself, not the bulletin — dismissing one bulletin then also
+// dismisses the same quake's follow-up reports (第2報, 詳報…). A 地震情報 is keyed by
+// its origin time; an EEW by its eventId, because JMA revises an EEW's origin time
+// between serials and a キャンセル報 keyed by time would never find the 第1報 it
+// retracts. Mirrors quake_key / _event_base in backend/earthquake.py.
+const quakeKey = (ev) => (ev && (ev.kind === "eew" ? (ev.id || ev.originTime) : (ev.originTime || ev.id))) || "";
 const eventBase = (ev) => ev.kind + ":" + quakeKey(ev);
 
 function scaleClass(s) { return SCALE_CLASS[s] || "i1"; }   // SCALE_CLASS: core.js
@@ -25,6 +27,23 @@ function quakeScale(ev) {
   // but a 551 with -1 (震源に関する情報 carries no intensity) must NOT bypass the
   // per-device threshold — it stays in the 🗾 list only.
   return ev && ev.kind === "eew" ? 999 : -1;
+}
+
+// A tsunami WARNING must not depend on how hard the floor shook here: the classic
+// shape is moderate local 震度 with a catastrophic wave (2011: 震度4 in much of
+// Tohoku's coast under a 大津波警報). Warning-class forecasts bypass the per-device
+// threshold; an advisory (注意報) does not — it still shows in the 🗾 list.
+const TSUNAMI_TAKEOVER = new Set(["Warning", "MajorWarning"]);
+function mustTakeOver(ev) {
+  return TSUNAMI_TAKEOVER.has(ev.tsunami) || quakeScale(ev) >= (minScale || 0);
+}
+// How "serious" a bulletin is, for the dismiss rule: the raw 震度 (-1 unknown) plus
+// a big step for a tsunami warning. A dismissed event stays closed for follow-ups
+// of the same or lower rank only — an EEW whose 第2報 escalates 震度3 → 6弱, or a
+// 地震情報 that gains a 津波警報, is new information and reopens the screen.
+function severityRank(ev) {
+  const s = Number(ev && ev.maxScale);
+  return (Number.isFinite(s) && s >= 0 ? s : -1) + (TSUNAMI_TAKEOVER.has(ev && ev.tsunami) ? 1000 : 0);
 }
 
 function formatDepth(km) {
@@ -57,14 +76,25 @@ function handleQuake(ev) {
   if (ev.kind === "quake") {                       // keep the browse list fresh
     const key = quakeKey(ev);
     recentQuakes = [ev, ...recentQuakes.filter((e) => quakeKey(e) !== key)].slice(0, recentCount);
+    if (manualMode && !overlay.classList.contains("hidden")) {
+      // someone is looking at the list right now: a new sub-threshold quake must
+      // appear in it, not sit in memory until the 15-minute refresh
+      const i = recentQuakes.findIndex((e) => shownEvent && quakeKey(e) === quakeKey(shownEvent));
+      renderRecentList();
+      document.querySelectorAll("#quake-recent .rq-item").forEach((el, k) =>
+        el.classList.toggle("active", k === i));
+    }
   }
-  if (quakeScale(ev) < (minScale || 0)) return;    // below this device's 震度 threshold → 🗾 list only
-  if (!manualMode && eventBase(ev) === dismissedBase) return;  // user closed this one
+  if (!mustTakeOver(ev)) return;                   // below this device's 震度 threshold → 🗾 list only
+  if (!manualMode && eventBase(ev) === dismissedBase && severityRank(ev) <= dismissedRank) return;  // user closed this one
+  const key = ev.kind + ":" + ev.id + ":" + ev.bulletin;
+  if (key === currentQuakeKey && !overlay.classList.contains("hidden")) return;  // this very bulletin is already up (replay after a reconnect): keep its countdown
   dismissedBase = null;
+  dismissedRank = -1;
   manualMode = false;
   document.getElementById("quake-recent").classList.add("hidden");   // live takeover: no list
   showQuakeLayout(ev);
-  currentQuakeKey = ev.kind + ":" + ev.id + ":" + ev.bulletin;
+  currentQuakeKey = key;
   // prefer the duration (clock-skew-proof local deadline) over the server epoch
   scheduleHide(ev.holdFor ? Date.now() / 1000 + ev.holdFor : ev.expiresAt);
 }
@@ -153,7 +183,7 @@ function selectRecent(i) {
 // Close the earthquake screen (✕ or 🗾). Dismissing a live event keeps it closed
 // (so the 30s poll won't immediately reopen it) until a new quake or manual reopen.
 function closeQuake() {
-  if (shownEvent && !manualMode) dismissedBase = eventBase(shownEvent);
+  if (shownEvent && !manualMode) { dismissedBase = eventBase(shownEvent); dismissedRank = severityRank(shownEvent); }
   hideQuake();
 }
 
@@ -195,9 +225,11 @@ function renderQuake(ev) {
   document.getElementById("q-depth").textContent = formatDepth(hypo.depth);
   document.getElementById("q-origin").textContent = formatOrigin(ev.originTime);
 
-  // tsunami row (earthquake reports only, when info exists)
+  // tsunami row (earthquake reports only, when info exists). Own keys only: an
+  // upstream value like "constructor" would otherwise print a function's source
   const tsuRow = document.getElementById("q-tsunami-row");
-  const tsuLabel = !isEew ? (t("tsunamiMap")[ev.tsunami] || "") : "";
+  const tsuMap = t("tsunamiMap");
+  const tsuLabel = !isEew && Object.prototype.hasOwnProperty.call(tsuMap, ev.tsunami) ? (tsuMap[ev.tsunami] || "") : "";
   if (tsuLabel) {
     tsuRow.classList.remove("hidden");
     document.getElementById("q-tsunami").textContent = tsuLabel;
@@ -294,21 +326,50 @@ async function pollQuake() {
 let quakeFeedState = "ok";   // "ok" | "fallback" (JMA polling) | "down" (no source)
 async function pollHealth() {
   const h = await getJson("/api/health", null);
-  const q = (h && h.quake) || null;
+  if (!h) {
+    // Backend unreachable. Say so on the badge, but leave every panel's state
+    // alone: the "データを取得できません" placeholder set while the backend was
+    // still answering must not revert to "取得中…" now that it is gone.
+    quakeFeedState = "down";
+    setFeedBadge();
+    return;
+  }
+  const q = h.quake || null;
   quakeFeedState = !q ? "down" : q.connected ? "ok" : q.fallbackActive ? "fallback" : "down";
+  setFeedBadge();
+  markStalePanels(h);
+}
+
+// The badge reflects the worst of two links: the backend's P2P feed, and THIS
+// tablet's socket to the backend. A tablet whose WebSocket is down gets no push
+// at all — for an EEW that is the whole product — even while the backend is fine.
+function setFeedBadge() {
   const btn = document.getElementById("quake-toggle");
   if (!btn) return;
-  btn.classList.toggle("feed-degraded", quakeFeedState === "fallback");
-  btn.classList.toggle("feed-down", quakeFeedState === "down");
-  btn.title = t(quakeFeedState === "ok" ? "feedOk"
-             : quakeFeedState === "fallback" ? "feedFallback" : "feedDown");
-  markStalePanels(h);
+  const state = quakeFeedState === "ok" && !wsOpen ? "nolink" : quakeFeedState;
+  btn.classList.toggle("feed-degraded", state === "fallback");
+  btn.classList.toggle("feed-down", state === "down" || state === "nolink");
+  btn.title = t(state === "ok" ? "feedOk" : state === "fallback" ? "feedFallback"
+             : state === "nolink" ? "feedNoLink" : "feedDown");
 }
 
 // A panel that never received data sits on "データ取得中…" forever. After the
 // backend has told us that feed is actually failing, that placeholder is a lie —
 // say so instead. We do NOT fabricate a card with "—" in every slot: an empty
 // shape that looks like real data is worse than an honest empty state.
+//
+// A panel that HAS data but whose feed stopped updating hours ago is the other
+// lie: it looks exactly like a quiet day. /api/health judges that age (`stale`,
+// three missed refreshes); here the panel is dimmed and labelled. The data stays
+// — last-good is the whole design — but the viewer can tell it is old.
+const STALE_PANELS = {            // feed name in /api/health → the panel it fills
+  "weather":    () => document.getElementById("weather"),
+  "news.ai":    () => document.getElementById("news-ai").closest(".news-col"),
+  "news.japan": () => document.getElementById("news-japan").closest(".news-col"),
+  "fx":         () => document.getElementById("fx-body").closest(".info-cell"),
+  "holiday":    () => document.getElementById("holiday-cell"),
+  "anime":      () => document.getElementById("anime-body").closest(".info-panel"),
+};
 function markStalePanels(health) {
   const down = new Set((health && health.degraded) || []);
   const loading = document.querySelector("#today .loading");
@@ -316,23 +377,65 @@ function markStalePanels(health) {
     loading.textContent = t(down.has("weather") ? "noDataError" : "noData");
     loading.classList.toggle("is-error", down.has("weather"));
   }
+  const feeds = (health && health.feeds) || {};
+  Object.keys(STALE_PANELS).forEach((name) => {
+    const el = STALE_PANELS[name]();
+    if (!el) return;
+    const stale = !!(feeds[name] && feeds[name].stale);
+    el.classList.toggle("is-stale", stale);
+    if (stale) el.setAttribute("data-stale", t("stale")); else el.removeAttribute("data-stale");
+  });
 }
 
 // ---- WebSocket -------------------------------------------------------------
-let wsWasConnected = false;
+// The server sends {"type":"ping"} every 25 s. A browser cannot notice a half-open
+// socket on its own (Wi-Fi blip, AP reboot: readyState stays OPEN, nothing ever
+// arrives — including the next EEW), so the watchdog below treats three missed
+// pings as dead and reconnects; the server replays any active event on connect.
+let ws = null, wsOpen = false, wsLastMsg = 0, wsWasConnected = false;
+const WS_STALE_MS = 3 * 25 * 1000;
+// Reconnect quickly, but not at a fixed 3 s forever: a weekend backend outage
+// would be ~60k attempts per tablet. Doubling up to 20 s keeps the worst-case
+// delay small (the 60 s poll and the replay-on-connect cover the gap anyway).
+const WS_RETRY_MIN_MS = 3000, WS_RETRY_MAX_MS = 20000;
+let wsRetryMs = WS_RETRY_MIN_MS;
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => {
+  const sock = new WebSocket(`${proto}://${location.host}/ws`);
+  ws = sock;
+  wsLastMsg = Date.now();
+  sock.onopen = () => {
+    wsLastMsg = Date.now();
+    wsOpen = true;
+    wsRetryMs = WS_RETRY_MIN_MS;
+    setFeedBadge();
     if (wsWasConnected) loadRecentQuakes();   // refresh the browse list after an outage gap
     wsWasConnected = true;
   };
-  ws.onmessage = (e) => {
+  sock.onmessage = (e) => {
+    wsLastMsg = Date.now();
     try {
       const m = JSON.parse(e.data);
       if (m.type === "earthquake") handleQuake(m.event);
+      else if (m.type === "alerts") loadNews();   // severe alerts changed → refresh the pinned rows now
     } catch (_) { /* ignore */ }
   };
-  ws.onclose = () => setTimeout(connectWS, 3000);
-  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  sock.onclose = () => {
+    if (ws !== sock) return;                       // superseded by the watchdog; it already reconnected
+    wsOpen = false;
+    setFeedBadge();
+    setTimeout(connectWS, wsRetryMs);
+    wsRetryMs = Math.min(wsRetryMs * 2, WS_RETRY_MAX_MS);
+  };
+  sock.onerror = () => { try { sock.close(); } catch (_) {} };
+}
+function watchWS() {
+  if (!ws || ws.readyState !== 1) return;          // connecting/closing: onclose handles it
+  if (Date.now() - wsLastMsg < WS_STALE_MS) return;
+  const dead = ws;                                 // silent for 3 pings: assume half-open
+  ws = null;
+  wsOpen = false;
+  dead.onclose = null; dead.onmessage = null; dead.onerror = null;
+  try { dead.close(); } catch (_) { /* already gone */ }
+  connectWS();                                     // don't wait for the close handshake
 }

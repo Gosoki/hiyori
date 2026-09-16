@@ -80,7 +80,11 @@ function boot(t, { api = {} } = {}) {
     const body = routes[key];
     return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   };
-  w.WebSocket = class { constructor() { this.readyState = 0; } close() {} };
+  // opens on the next tick, like a real socket — the 🗾 badge treats "no socket" as a fault
+  w.WebSocket = class {
+    constructor() { this.readyState = 0; setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); }, 0); }
+    close() { this.readyState = 3; }
+  };
   w.ResizeObserver = class { observe() {} disconnect() {} };
 
   // index.html's own order is the contract; read it rather than hard-coding a list
@@ -307,6 +311,173 @@ test("a slow first load still reads as loading, not as an error", async (t) => {
   await settle();
   const el = $("today").querySelector(".loading");
   assert.ok(el && !el.classList.contains("is-error"), "a healthy slow load was reported as broken");
+});
+
+test("a feed that stopped updating dims and labels its panel", async (t) => {
+  // the data on the panel is still the last good — by design — but a viewer must be
+  // able to tell "quiet day" from "this column stopped hours ago"
+  const stale = { status: "ok", degraded: [], quake: { connected: true, fallbackActive: false },
+                  feeds: { weather: { ok: true, stale: true }, fx: { ok: true, stale: false } } };
+  const { $, ev } = boot(t, { api: { "/api/health": stale } });
+  await settle();
+  assert.ok($("weather").classList.contains("is-stale"), "stale weather panel not marked");
+  assert.equal($("weather").getAttribute("data-stale"), "更新停止");
+  assert.ok(!$("holiday-cell").classList.contains("is-stale"), "a fresh panel was marked");
+  ev("markStalePanels({ feeds: { weather: { stale: false } } })");
+  assert.ok(!$("weather").classList.contains("is-stale"), "the mark did not clear");
+  assert.equal($("weather").getAttribute("data-stale"), null);
+});
+
+test("a tsunami warning takes the screen over even below the 震度 threshold", async (t) => {
+  // the 2011 shape: moderate local shaking, catastrophic wave. Warning-class
+  // forecasts bypass the per-device threshold; an advisory (注意報) does not.
+  const { ev, $ } = boot(t);
+  await settle();
+  const hidden = () => $("quake-overlay").classList.contains("hidden");
+  ev("hideQuake(); dismissedBase=null; minScale=45;");
+  ev(`handleQuake(${JSON.stringify(quake({ id: "t1", originTime: "2026/08/05 20:00:00", maxScale: 40, maxIntensity: "4", tsunami: "Watch" }))})`);
+  assert.ok(hidden(), "an advisory alone should not bypass the threshold");
+  ev(`handleQuake(${JSON.stringify(quake({ id: "t2", originTime: "2026/08/05 20:01:00", maxScale: 40, maxIntensity: "4", tsunami: "MajorWarning" }))})`);
+  assert.ok(!hidden(), "大津波警報 must take over regardless of 震度");
+  assert.match(txtOf($("q-tsunami")), /大津波警報/);
+});
+const txtOf = (el) => (el && el.textContent) || "";
+
+test("dismissing an early bulletin does not silence an escalation of the same event", async (t) => {
+  const { ev, $ } = boot(t);
+  await settle();
+  const hidden = () => $("quake-overlay").classList.contains("hidden");
+  ev("hideQuake(); dismissedBase=null; minScale=30;");
+  const eew = (o) => quake({ kind: "eew", id: "EV1", originTime: "2026/08/05 21:00:00", tsunami: "Unknown", ...o });
+  ev(`handleQuake(${JSON.stringify(eew({ bulletin: "1", maxScale: 30, maxIntensity: "3" }))})`);
+  ev("closeQuake()");
+  assert.ok(hidden());
+  ev(`handleQuake(${JSON.stringify(eew({ bulletin: "2", maxScale: 30, maxIntensity: "3", originTime: "2026/08/05 20:59:58" }))})`);
+  assert.ok(hidden(), "same intensity (even with JMA's revised origin time) must stay dismissed");
+  ev(`handleQuake(${JSON.stringify(eew({ bulletin: "3", maxScale: 55, maxIntensity: "6弱" }))})`);
+  assert.ok(!hidden(), "第3報 escalating to 6弱 must reopen the screen");
+  // and a 地震情報 that gains a tsunami warning reopens too
+  ev("hideQuake(); dismissedBase=null;");
+  ev(`handleQuake(${JSON.stringify(quake({ id: "q9", originTime: "2026/08/05 22:00:00", maxScale: 40, tsunami: "None" }))})`);
+  ev("closeQuake()");
+  ev(`handleQuake(${JSON.stringify(quake({ id: "q9", bulletin: "r2", originTime: "2026/08/05 22:00:00", maxScale: 40, tsunami: "Warning" }))})`);
+  assert.ok(!hidden(), "a follow-up adding 津波警報 must reopen");
+});
+
+test("a replay of the bulletin already on screen keeps its countdown", async (t) => {
+  const { ev, txt } = boot(t);
+  await settle();
+  ev("hideQuake(); dismissedBase=null; minScale=30;");
+  ev(`handleQuake(${JSON.stringify(quake({ id: "r1", originTime: "2026/08/05 23:00:00", holdFor: 40 }))})`);
+  assert.match(txt("quake-remaining"), /40s/);
+  ev(`handleQuake(${JSON.stringify(quake({ id: "r1", originTime: "2026/08/05 23:00:00", holdFor: 90 }))})`);
+  assert.match(txt("quake-remaining"), /40s/, "the replay restarted the countdown");
+});
+
+test("the settings panel closes on a backdrop tap and sits below the quake overlay", async (t) => {
+  const { w, $, ev } = boot(t);
+  await settle();
+  ev("openSettings()");
+  assert.ok(!$("settings-overlay").classList.contains("hidden"));
+  $("settings-overlay").dispatchEvent(new w.Event("click", { bubbles: true }));
+  assert.ok($("settings-overlay").classList.contains("hidden"), "a tap on the backdrop did not close it");
+  // z-order is CSS, which jsdom does not apply: pin it from the stylesheet text
+  const css = fs.readFileSync(path.join(FE, "style.css"), "utf8");
+  const z = (sel) => Number((css.match(new RegExp(sel.replace(/[#.]/g, "\\$&") + "\\s*\\{[^}]*z-index:\\s*(\\d+)")) || [])[1]);
+  assert.ok(z("#settings-overlay") < z("#quake-overlay"), `settings z=${z("#settings-overlay")} must be below quake z=${z("#quake-overlay")}`);
+});
+
+test("a NERV item flagged for the banner shows it, and it ages out", async (t) => {
+  const now = Math.floor(Date.now() / 1000);
+  const japan = [
+    { title: "【津波警報】津波警報を発表しました", source: "NERV", alert: true, banner: true, ts: now },
+    { title: "主要ニュース", link: "b", source: "産経" },
+  ];
+  const { $, ev } = boot(t, { api: { "/api/news": { ai: [{ title: "x" }], japan } } });
+  await settle();
+  assert.ok(!$("alert-banner").classList.contains("hidden"), "banner not shown");
+  assert.match($("alert-banner").textContent, /津波警報/);
+  assert.ok($("dashboard").classList.contains("has-alert"));
+  ev(`renderAlertBanner([{ title: "old", alert: true, banner: true, ts: ${now - 4 * 3600} }])`);
+  assert.ok($("alert-banner").classList.contains("hidden"), "a 4-hour-old alert should have aged out");
+  assert.ok(!$("dashboard").classList.contains("has-alert"));
+  ev(`renderAlertBanner([{ title: "<b>x</b>", alert: true, banner: true, ts: ${now} }])`);
+  assert.equal($("alert-banner").querySelectorAll("b").length, 0, "banner text must be inert");
+});
+
+test("switching the AI source clears the old source's headlines at once", async (t) => {
+  const { $, ev } = boot(t);
+  await settle();
+  assert.equal($("news-ai").lang, "zh");
+  ev('resetAiColumn("ja")');
+  assert.equal($("news-ai").lang, "ja");
+  assert.equal($("news-ai").children.length, 1);
+  assert.match($("news-ai").textContent, /取得中/);
+  assert.equal(ev("lastNewsText"), "");
+});
+
+test("an unchanged forecast does not rebuild the weather DOM", async (t) => {
+  const { $, ev } = boot(t);
+  await settle();
+  const before = $("weekly").firstChild;
+  await ev("loadWeather()");
+  await settle();
+  assert.equal($("weekly").firstChild, before, "the weekly strip was rebuilt for identical data");
+});
+
+test("an EEW is keyed by its eventId, a 地震情報 by its origin time", async (t) => {
+  const { ev } = boot(t);
+  await settle();
+  assert.equal(ev('quakeKey({ kind: "eew", id: "E1", originTime: "t" })'), "E1");
+  assert.equal(ev('quakeKey({ kind: "quake", id: "Q1", originTime: "t" })'), "t");
+});
+
+// ---------------------------------------------------------------- push path
+test("an alerts push refreshes the news column at once", async (t) => {
+  const { w, ev } = boot(t);
+  await settle();
+  let n = 0;
+  const orig = w.fetch;
+  w.fetch = (u) => { if (String(u).includes("/api/news")) n++; return orig(u); };
+  ev('ws.onmessage({ data: JSON.stringify({ type: "alerts", items: [] }) })');
+  await settle();
+  assert.equal(n, 1, "the tablet did not refetch the news after an alerts push");
+  ev('ws.onmessage({ data: JSON.stringify({ type: "ping" }) })');   // heartbeat: no fetch
+  await settle();
+  assert.equal(n, 1);
+});
+
+test("a WebSocket that has gone silent is replaced", async (t) => {
+  // a half-open socket stays OPEN forever from the browser's point of view; three
+  // missed server heartbeats is the only signal, and an EEW must not wait for it
+  const { ev } = boot(t);
+  await settle();
+  const before = ev("ws");
+  ev("ws.readyState = 1; wsLastMsg = Date.now() - 1000;");
+  ev("watchWS()");
+  assert.equal(ev("ws"), before, "a recently-heard socket was dropped");
+  ev("wsLastMsg = Date.now() - WS_STALE_MS - 1; watchWS()");
+  assert.notEqual(ev("ws"), before, "the silent socket was not replaced");
+  assert.equal(before.onclose, null, "the old socket could still trigger a second reconnect");
+  await settle();   // let the replacement socket "open" while the window is still alive
+});
+
+test("empty panels are re-asked until they have data, then left alone", async (t) => {
+  const { w, ev } = boot(t, { api: { "/api/fx": undefined } });
+  await settle();
+  let n = 0;
+  const orig = w.fetch;
+  w.fetch = (u) => { if (String(u).includes("/api/fx")) n++; return orig(u); };
+  ev("startColdStartRetry([{ has: () => !!lastFx, load: loadFx }], 10)");
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(n >= 2, `fx was retried ${n} times`);
+  w.fetch = async (u) => String(u).includes("/api/fx")
+    ? { ok: true, json: async () => ({ rate: 1, baseLabel: "a", quoteLabel: "b" }) } : orig(u);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(ev("lastFx"), "the retry never delivered the data");
+  const settled = n;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(n, settled, "kept polling after the panel had data");
 });
 
 // -------------------------------------------------------------------- i18n

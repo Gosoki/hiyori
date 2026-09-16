@@ -3,12 +3,25 @@
 // 天気: the today card, the weekly strip and the met.no hourly strip.
 
 // ---- weather ---------------------------------------------------------------
+// Rebuilding the card and the weekly strip (six large emoji) blanks and re-lays
+// them out for a frame; doing that every 10 minutes for a forecast that has not
+// changed is a visible blink, and the reflow of this auto-height row re-fits both
+// news columns for nothing. Compare the payload (minus the backend's `updated`
+// stamp, which changes on every fetch) and skip the DOM work when it is the same.
+let lastWeatherKey = "", lastHourlyKey = "";
+function weatherKey(data) { return JSON.stringify({ ...data, updated: undefined }); }
+
 async function loadWeather() {
   const want = cityId;   // discard the response if the user switched city mid-flight
   try {
     const data = await (await fetch("/api/weather?city=" + encodeURIComponent(cityId || ""))).json();
     if (want !== cityId) return;
-    if (data && data.today) { lastWeather = data; renderWeather(data); }
+    if (!(data && data.today)) return;
+    const key = weatherKey(data);
+    lastWeather = data;
+    if (key === lastWeatherKey) return;   // same forecast → leave the DOM alone
+    renderWeather(data);
+    lastWeatherKey = key;
   } catch (_) { /* keep last */ }
 }
 
@@ -84,6 +97,9 @@ async function loadHourly() {
     if (want !== cityId) return;
     if (Array.isArray(list) && list.length) {   // empty = backend cold start during outage; keep last-good
       lastHourly = list;
+      const key = JSON.stringify(list);
+      if (key === lastHourlyKey) return;        // unchanged strip → no DOM churn
+      lastHourlyKey = key;
       renderHourly(list);
       // if the today card is missing its high/low, re-render now that hourly is in
       const td = lastWeather && lastWeather.today;

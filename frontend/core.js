@@ -43,6 +43,7 @@ function applyI18n() {
   if (lastHoliday) renderHoliday(lastHoliday);
   renderAnime(lastAnime || []);   // re-render so the 準備中 placeholder switches language too
   updateFullscreenBtn();
+  buildNightOption();
 }
 
 // ---- clock -----------------------------------------------------------------
@@ -68,9 +69,15 @@ function buildClockFormatters() {
   };
 }
 
+// Hooks the clock runs for other panels: once per minute change, and once per JST
+// day change (holiday countdown, anime cutoff — things that are correct only if
+// they are recomputed when the calendar turns, not when their own poll happens to
+// fire). Registered by app.js; core.js stays free of panel knowledge.
+const minuteHooks = [], dayHooks = [];
+
 function startClock() {
   const timeEl = document.getElementById("time");
-  let shown = "";
+  let shown = "", shownDay = jstDateISO();
   const tick = () => {
     if (!clockFmt) buildClockFormatters();
     const now = new Date();
@@ -82,9 +89,44 @@ function startClock() {
     if (dateEl) dateEl.textContent = clockFmt.date.format(now);
     const wdEl = document.getElementById("today-wd");
     if (wdEl) wdEl.textContent = clockFmt.wd.format(now);
+    minuteHooks.forEach((fn) => { try { fn(now); } catch (_) { /* a panel's problem, not the clock's */ } });
+    const day = jstDateISO();
+    if (day !== shownDay) {
+      shownDay = day;
+      dayHooks.forEach((fn) => { try { fn(day); } catch (_) { /* ditto */ } });
+    }
   };
   tick();
-  setInterval(tick, 5000);
+  // Fire just past each minute boundary instead of polling every 5 s: the display
+  // then never lags the real minute by up to a poll period. A coarse interval backs
+  // it up in case the browser ever coalesces a long timeout (the tick is idempotent).
+  const alignedTick = () => {
+    tick();
+    setTimeout(alignedTick, 60000 - (Date.now() % 60000) + 50);
+  };
+  setTimeout(alignedTick, 60000 - (Date.now() % 60000) + 50);
+  setInterval(tick, 15000);
+}
+
+// ---- cold-start retry ------------------------------------------------------
+// The regular pollers run every 5–60 min. If the tablet boots before the backend
+// has its first data — a power cut brings both back at once, and the backend
+// needs a few seconds per upstream — a panel would sit on its placeholder until
+// its next poll: up to an hour for FX / holiday / anime. Until every panel has
+// painted once, re-ask the empty ones on a short, backing-off schedule.
+// Backend-side caching and its failure cooldown keep this from reaching upstreams
+// more than once per ~30 s, and it stops by itself once everything has data.
+const COLD_RETRY_MS = 15 * 1000, COLD_RETRY_MAX_MS = 120 * 1000;
+function startColdStartRetry(loaders, firstMs = COLD_RETRY_MS) {
+  let wait = firstMs;
+  const again = () => {
+    const pending = loaders.filter((l) => !l.has());
+    if (!pending.length) return;                     // everything painted — done
+    pending.forEach((l) => { try { l.load(); } catch (_) { /* loaders never throw */ } });
+    wait = Math.min(wait * 1.5, COLD_RETRY_MAX_MS);
+    setTimeout(again, wait);
+  };
+  setTimeout(again, wait);
 }
 
 // ---- shared helpers --------------------------------------------------------
@@ -118,9 +160,17 @@ function escapeHtml(s) {
 
 // Boot metadata, fetched together — these three are independent, so awaiting them
 // in sequence just spent two round trips before the first pixel of real data.
+// Bounded: a server that accepts the connection and then never answers would
+// otherwise park init() behind Chrome's multi-minute request timeout — with the
+// clock reading --:-- and no poller installed until it gave up.
+const FETCH_TIMEOUT_MS = 8000;
+function fetchOpts() {
+  return (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
+    ? { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) } : {};
+}
 async function getJson(url, fallback) {
   try {
-    const data = await (await fetch(url)).json();
+    const data = await (await fetch(url, fetchOpts())).json();
     // `null` is valid JSON and does NOT throw — but it would take init() down on
     // the first property read, and a thrown init() means a permanently blank
     // dashboard. Every caller wants the fallback's shape, never null.

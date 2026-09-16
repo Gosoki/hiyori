@@ -13,6 +13,9 @@
 </head>
 <body>
   <div id="dashboard">
+    <!-- Severe-alert banner (津波警報 / 特別警報 / Jアラート from NERV): a grid row that
+         only exists while an alert is live, so the panels below simply shrink -->
+    <div id="alert-banner" class="hidden" lang="ja" role="alert"></div>
     <!-- Header -->
     <header id="topbar">
       <div class="brand"><span id="city" title="Settings" role="button" tabindex="0">—</span></div>
@@ -108,6 +111,7 @@
       <div id="lang-options" class="lang-options city-options"></div>
       <label data-i18n="thresholdLabel">全画面 最小震度</label>
       <div id="threshold-options" class="lang-options city-options"></div>
+      <button id="night-btn" class="fs-btn"></button>
       <button id="fullscreen-btn" class="fs-btn">全画面表示</button>
       <button id="settings-close" data-i18n="close">閉じる</button>
     </div>

@@ -3,10 +3,11 @@
 // Bottom-bar widgets: 為替 exchange rate, 祝日 holiday countdown, 新番 anime.
 
 // ---- exchange rate ---------------------------------------------------------
+let lastFx = null;
 async function loadFx() {
   try {
     const fx = await (await fetch("/api/fx")).json();
-    if (fx && fx.rate) renderFx(fx);
+    if (fx && fx.rate) { lastFx = fx; renderFx(fx); }
   } catch (_) { /* keep last */ }
 }
 function fxFmt(v) { return v.toFixed(3).replace(/\.?0+$/, ""); }   // 3 decimals, trim trailing zeros
