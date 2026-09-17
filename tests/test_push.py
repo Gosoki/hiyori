@@ -16,14 +16,27 @@ from main import FeedHealth
 
 @pytest.fixture(autouse=True)
 def _isolate():
+    """Fresh health, latest and outbox per test.
+
+    The outbox matters: it is a module-level asyncio.Queue, and every test here
+    runs in its own asyncio.run() loop. A pump task cancelled as its loop closes
+    can leave a waiter attached to that dead loop, and the next test's enqueue then
+    hands its message to the corpse instead of the live pump — a failure that only
+    appears when the whole suite runs. Production has one loop and one pump, so
+    this is a test-harness hazard, not a product one; isolate it rather than
+    complicate the product.
+    """
     saved_health = dict(main.HEALTH)
     saved_latest = dict(main.latest)
+    saved_outbox = main.outbox
     main.HEALTH.clear()
+    main.outbox = asyncio.Queue()
     yield
     main.HEALTH.clear()
     main.HEALTH.update(saved_health)
     main.latest.clear()
     main.latest.update(saved_latest)
+    main.outbox = saved_outbox
 
 
 @pytest.fixture
@@ -157,8 +170,6 @@ def test_on_earthquake_returns_without_waiting_for_a_wedged_tablet():
 
 
 def test_outbox_preserves_order():
-    while not main.outbox.empty():
-        main.outbox.get_nowait()
     main.enqueue({"n": 1})
     main.enqueue({"n": 2})
     main.enqueue({"n": 3})
@@ -302,3 +313,52 @@ def test_anime_from_a_previous_jst_day_is_not_served():
     assert run(go()) == [], "a stale day's line-up was served as today's"
     main.latest["anime_day"] = main.datetime.datetime.now(main.JST).date().isoformat()
     assert run(go())[0]["title"] == "x"
+
+
+# --------------------------------------------------------------------------
+# The fan-out must be unkillable
+# --------------------------------------------------------------------------
+def test_every_bulletin_reaches_the_tablets_even_when_it_does_not_become_current():
+    """_supersedes only governs the replay/poll snapshot. A live push is never
+    filtered: the tablet decides for itself what to put on screen."""
+    import earthquake as E
+    seen = []
+
+    async def on_event(ev):
+        seen.append(ev)
+
+    svc = E.EarthquakeService("ws://test", 90, on_event)
+    strong = {"kind": "quake", "originTime": "T1", "maxScale": 55}
+    weak = {"kind": "quake", "originTime": "T2", "maxScale": 20}
+    run(svc.publish(dict(strong)))
+    run(svc.publish(dict(weak)))
+    assert [e["maxScale"] for e in seen] == [55, 20], "a bulletin was dropped on the way out"
+    assert svc.active()["maxScale"] == 55, "the weaker quake should not own the snapshot"
+
+
+def test_the_pump_survives_a_failing_broadcast(monkeypatch):
+    """If this task dies, every later EEW goes nowhere while everything still
+    looks healthy — so one bad message must not take it down."""
+    calls = []
+
+    async def boom(message):
+        calls.append(message)
+        if len(calls) == 1:
+            raise RuntimeError("a socket layer blew up")
+
+    monkeypatch.setattr(main, "broadcast", boom)
+
+    async def go():
+        pump = asyncio.create_task(main.pump_loop())
+        main.enqueue({"type": "earthquake", "n": 1})
+        main.enqueue({"type": "earthquake", "n": 2})
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if len(calls) == 2:
+                break
+        alive = not pump.done()
+        pump.cancel()
+        return alive
+
+    assert run(go()), "the pump died on the first failure"
+    assert [c["n"] for c in calls] == [1, 2], "the message after the failure was never sent"

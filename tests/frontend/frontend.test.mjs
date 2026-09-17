@@ -480,6 +480,41 @@ test("empty panels are re-asked until they have data, then left alone", async (t
   assert.equal(n, settled, "kept polling after the panel had data");
 });
 
+test("restarting a named retry chain replaces it instead of stacking", async (t) => {
+  // Jikan stays down; every midnight starts another anime chain. Unnamed, a week
+  // of outage left 8 chains polling in parallel — a request every 15 s from a
+  // mechanism meant to fire every 120 s.
+  const { w, ev } = boot(t, { api: { "/api/anime": undefined } });
+  await settle();
+  let n = 0;
+  const orig = w.fetch;
+  w.fetch = (u) => { if (String(u).includes("/api/anime")) n++; return orig(u); };
+  for (let day = 0; day < 5; day++) {
+    ev('startColdStartRetry([{ has: () => false, load: loadAnime }], 10, "anime-day")');
+  }
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(n <= 4, `5 nights of outage fired ${n} anime fetches — the chains stacked`);
+  // a chain under a different name is unaffected
+  ev('startColdStartRetry([{ has: () => false, load: loadFx }], 10, "boot")');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.ok(ev('coldRetryToken["anime-day"] > 0 && coldRetryToken["boot"] > 0'));
+});
+
+test("a backend blip does not clear a tsunami banner that is still in force", async (t) => {
+  // the news list already keeps last-good on an empty response; the banner has to
+  // follow the same rule, or a backend restart wipes a live warning off every wall
+  const now = Math.floor(Date.now() / 1000);
+  const japan = [{ title: "【津波警報】発表", source: "NERV", alert: true, banner: true, ts: now }];
+  const { $, ev } = boot(t, { api: { "/api/news": { ai: [{ title: "x" }], japan } } });
+  await settle();
+  assert.ok(!$("alert-banner").classList.contains("hidden"), "banner never appeared");
+  ev('renderNews({ ai: [], japan: [] })');          // backend cold-started
+  assert.ok(!$("alert-banner").classList.contains("hidden"), "an empty response cleared a live warning");
+  assert.equal($("news-japan").children.length, 1, "the list should also keep last-good");
+  ev('renderNews({ ai: [], japan: [{ title: "平常のニュース" }] })');   // alert genuinely lifted
+  assert.ok($("alert-banner").classList.contains("hidden"), "a real clear should hide the banner");
+});
+
 // -------------------------------------------------------------------- i18n
 test("every data-i18n label is translated in all three languages", async (t) => {
   const { w, ev } = boot(t);

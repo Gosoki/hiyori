@@ -213,8 +213,19 @@ def enqueue(message):
 
 
 async def pump_loop():
+    """Drain the outbox forever. This task is the ONLY path from an event to the
+    tablets, so it must not be killable by one bad message: if it ever raised, the
+    task would die silently and every later EEW would go nowhere, with the feed,
+    the queue and /api/health all still looking healthy. broadcast() already
+    swallows per-socket failures; this catches anything else."""
     while True:
-        await broadcast(await outbox.get())
+        message = await outbox.get()
+        try:
+            await broadcast(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:                  # noqa: BLE001 - never let the fan-out die
+            log.exception("broadcast failed for %s", (message or {}).get("type"))
 
 
 HEARTBEAT = 25   # seconds between application-level pings to every tablet

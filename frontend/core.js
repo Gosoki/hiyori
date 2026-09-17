@@ -116,10 +116,19 @@ function startClock() {
 // painted once, re-ask the empty ones on a short, backing-off schedule.
 // Backend-side caching and its failure cooldown keep this from reaching upstreams
 // more than once per ~30 s, and it stops by itself once everything has data.
+//
+// `key` names the chain: starting one supersedes the chain already running under
+// that name. Without it the midnight anime retry would start a SECOND chain every
+// day that Jikan stays down, while the first is still going — a week of outage
+// leaves 8 chains polling in parallel (measured), i.e. a request every 15 s from a
+// mechanism meant to fire every 120 s. Chains under different names are independent.
 const COLD_RETRY_MS = 15 * 1000, COLD_RETRY_MAX_MS = 120 * 1000;
-function startColdStartRetry(loaders, firstMs = COLD_RETRY_MS) {
+const coldRetryToken = {};
+function startColdStartRetry(loaders, firstMs = COLD_RETRY_MS, key = "boot") {
+  const token = coldRetryToken[key] = (coldRetryToken[key] || 0) + 1;
   let wait = firstMs;
   const again = () => {
+    if (coldRetryToken[key] !== token) return;       // a newer chain took this name over
     const pending = loaders.filter((l) => !l.has());
     if (!pending.length) return;                     // everything painted — done
     pending.forEach((l) => { try { l.load(); } catch (_) { /* loaders never throw */ } });

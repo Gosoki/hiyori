@@ -185,7 +185,8 @@ async function init() {
     // short schedule until Jikan has answered for the new day.
     lastAnime = null; lastAnimeDay = null;
     renderAnime([]);
-    startColdStartRetry([{ has: () => !!(lastAnime && lastAnime.length), load: loadAnime }], 5 * 1000);
+    startColdStartRetry([{ has: () => !!(lastAnime && lastAnime.length), load: loadAnime }],
+                        5 * 1000, "anime-day");   // named: tonight's chain replaces last night's
   });
   const [cfg, cityList, aiList] = await Promise.all([
     getJson("/api/config", {}),

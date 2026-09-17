@@ -25,8 +25,14 @@ function renderNews(data) {
   // keep whatever the tablet is already showing instead of blanking the column
   const aiLang = (aiSources.find((s) => s.id === aiSrc) || {}).lang || "zh";
   if ((data.ai || []).length) fillNewsList("news-ai", data.ai, aiLang);
-  if ((data.japan || []).length) fillNewsList("news-japan", data.japan, "ja");   // 主要ニュース is always Japanese
-  renderAlertBanner((data.japan || []).filter((it) => it && it.alert));
+  // 【横幅和列表必须共用这一个 last-good 判断】分开写过一版：列表留着上一份好数据、
+  // 横幅却按空响应清掉。后果是后端重启（或冷启动那几秒）会把一条【仍在生效的】
+  // 津波警報 从所有平板上抹掉，而同一屏的新闻列表还好端端显示着 —— 这正是后端那边
+  // 「一次抓取失败不能撤掉在生效的警报」同一个坑，只是发生在前端。
+  if ((data.japan || []).length) {
+    fillNewsList("news-japan", data.japan, "ja");   // 主要ニュース is always Japanese
+    renderAlertBanner(data.japan.filter((it) => it && it.alert));
+  }
 }
 
 // The user picked another AI source: the old source's headlines — in the old
