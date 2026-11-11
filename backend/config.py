@@ -152,7 +152,7 @@ FX_BASE_LABEL = "元"    # short display label per currency
 FX_QUOTE_LABEL = "円"
 FX_REFRESH = 21600   # 6h; open.er-api free rates only update ~once a day
 
-# --- Anime (Jikan / MyAnimeList, free, no key) ------------------------------
+# --- Anime (AniList, Jikan / MyAnimeList fallback; free, no key) -----------
 # The 新番 slot shows the broadcast day (00:00 today → 05:59 tomorrow) in time order.
 # Refreshed every 6h, aligned to 00/06/12/18 JST so the day rolls over at midnight.
 ANIME_REFRESH = 21600   # 6 hours

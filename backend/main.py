@@ -531,7 +531,7 @@ TAGS_METADATA = [
     {"name": "meta", "description": "Boot-time defaults and the selectable city / AI-source lists the frontend reads on startup."},
     {"name": "weather", "description": "気象庁 (JMA) today + weekly forecast and met.no hourly strip. Cached per city; keeps last-good on upstream failure."},
     {"name": "news", "description": "主要ニュース (Google News Top, with NERV severe alerts pinned) and the switchable AI・テック column."},
-    {"name": "widgets", "description": "Bottom-bar widgets: 為替 (open.er-api), 新番 anime schedule (Jikan), and 祝日 holidays (holidays-jp)."},
+    {"name": "widgets", "description": "Bottom-bar widgets: 為替 (open.er-api), 新番 anime schedule (AniList, Jikan fallback), and 祝日 holidays (holidays-jp)."},
     {"name": "earthquake", "description": "P2P地震情報: the active/most-recent quakes over HTTP, plus live EEW/quake push over the `/ws` WebSocket."},
     {"name": "ops", "description": "Liveness of every upstream. Nothing on screen changes when a feed dies (each column keeps its last-good data), so this is the only place a silent outage is visible."},
 ]

@@ -49,6 +49,9 @@ def _fake_client(monkeypatch, by_day):
         async def get(self, url, params=None, **kw):
             return Resp(by_day.get(params["filter"], []))
 
+        async def post(self, url, json=None, **kw):   # AniList down → Jikan path
+            raise A.httpx.ConnectTimeout("down")
+
     monkeypatch.setattr(A.httpx, "AsyncClient", lambda *a, **kw: Client())
 
 
@@ -119,3 +122,45 @@ def test_every_emitted_time_is_well_formed(monkeypatch):
         hh, mm = row["time"].split(":")
         assert len(hh) == 2 and len(mm) == 2
         assert 0 <= int(hh) <= 29 and 0 <= int(mm) <= 59
+
+
+def test_anilist_is_primary(monkeypatch):
+    """AniList's per-episode times; same 24h+ window and row shape as Jikan's."""
+    now = A.datetime.datetime.now(A.JST)
+    start = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+    def ep(at, mid, native, country="JP", adult=False):
+        return {"airingAt": start + at, "media": {"id": mid, "isAdult": adult,
+                "countryOfOrigin": country, "title": {"native": native, "romaji": "x"}}}
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"Page": {"pageInfo": {"hasNextPage": False}, "airingSchedules": [
+                ep(21 * 3600, 1, "今夜"),
+                ep(21 * 3600 + 1800, 1, "今夜"),              # double episode → one row
+                ep(22 * 3600, 2, "大夏守墓人", country="CN"),
+                ep(23 * 3600, 3, "adult", adult=True),
+                ep(26 * 3600 + 1800, 4, "深夜"),              # 02:30 tomorrow
+            ]}}}
+
+    class Client:
+        headers = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None, **kw):
+            raise AssertionError("Jikan should not be hit while AniList works")
+
+        async def post(self, url, json=None, **kw):
+            return Resp()
+
+    monkeypatch.setattr(A.httpx, "AsyncClient", lambda *a, **kw: Client())
+    rows = asyncio.run(A.fetch_anime(24))
+    assert rows == [{"time": "21:00", "title": "今夜"}, {"time": "26:30", "title": "深夜"}]

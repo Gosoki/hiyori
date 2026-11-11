@@ -47,9 +47,11 @@ function renderHoliday(list) {
   const days = Math.round((Date.parse(next.date) - Date.parse(today)) / 86400000);
   const nm = `<span class="hl-name" lang="ja">${escapeHtml(next.name)}</span>`;   // bold red, spaces around
   const n = `<span class="hl-n">${days}</span>`;
-  if (lang === "ja") el.innerHTML = days === 0 ? `本日は ${nm}` : `${nm} まで ${n} 日`;
+  // Name always last: on a narrow tablet the line's ellipsis eats the tail of a
+  // long name (勤労感謝の日 → 勤労感…), never the day count.
+  if (lang === "ja") el.innerHTML = days === 0 ? `本日は ${nm}` : `あと ${n} 日 ${nm}`;
   else if (lang === "en") el.innerHTML = days === 0 ? `Today: ${nm}` : `${n} days to ${nm}`;
-  else el.innerHTML = days === 0 ? `本日は ${nm}` : `距 ${nm} ${n} 天`;
+  else el.innerHTML = days === 0 ? `本日は ${nm}` : `${n} 天后 ${nm}`;
 }
 
 // ---- anime schedule (今夜の放送) -------------------------------------------
