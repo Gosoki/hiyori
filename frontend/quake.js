@@ -34,16 +34,20 @@ function quakeScale(ev) {
 // Tohoku's coast under a 大津波警報). Warning-class forecasts bypass the per-device
 // threshold; an advisory (注意報) does not — it still shows in the 🗾 list.
 const TSUNAMI_TAKEOVER = new Set(["Warning", "MajorWarning"]);
+// An EEW 警報 (P2P's are all 警報; a Wolfx 予報 carries warn:false) always shows.
+const isWarning = (ev) => !!ev && ev.kind === "eew" && ev.warn !== false;
 function mustTakeOver(ev) {
-  return TSUNAMI_TAKEOVER.has(ev.tsunami) || quakeScale(ev) >= (minScale || 0);
+  return TSUNAMI_TAKEOVER.has(ev.tsunami) || isWarning(ev) || quakeScale(ev) >= (minScale || 0);
 }
 // How "serious" a bulletin is, for the dismiss rule: the raw 震度 (-1 unknown) plus
 // a big step for a tsunami warning. A dismissed event stays closed for follow-ups
 // of the same or lower rank only — an EEW whose 第2報 escalates 震度3 → 6弱, or a
-// 地震情報 that gains a 津波警報, is new information and reopens the screen.
+// 地震情報 that gains a 津波警報, is new information and reopens the screen. A 警報
+// outranks any 予報, so a dismissed 予報 never holds back its quake's 警報.
 function severityRank(ev) {
   const s = Number(ev && ev.maxScale);
-  return (Number.isFinite(s) && s >= 0 ? s : -1) + (TSUNAMI_TAKEOVER.has(ev && ev.tsunami) ? 1000 : 0);
+  return (Number.isFinite(s) && s >= 0 ? s : -1) + (TSUNAMI_TAKEOVER.has(ev && ev.tsunami) ? 1000 : 0)
+    + (isWarning(ev) ? 100 : 0);
 }
 
 function formatDepth(km) {
@@ -86,6 +90,10 @@ function handleQuake(ev) {
     }
   }
   if (!mustTakeOver(ev)) return;                   // below this device's 震度 threshold → 🗾 list only
+  // a 予報 never covers a 警報 that is up (another quake's: the backend already
+  // stops a quake's 予報 once it has been warned)
+  if (ev.kind === "eew" && !isWarning(ev) && !manualMode && isWarning(shownEvent)
+      && !overlay.classList.contains("hidden")) return;
   if (!manualMode && eventBase(ev) === dismissedBase && severityRank(ev) <= dismissedRank) return;  // user closed this one
   const key = ev.kind + ":" + ev.id + ":" + ev.bulletin;
   if (key === currentQuakeKey && !overlay.classList.contains("hidden")) return;  // this very bulletin is already up (replay after a reconnect): keep its countdown
@@ -213,7 +221,9 @@ function renderQuake(ev) {
   const banner = document.getElementById("quake-banner");
   banner.className = "quake-banner " + scaleClass(ev.maxScale > 0 ? ev.maxScale : (isEew ? 55 : 20));
   document.getElementById("quake-title").textContent = isEew ? t("eew") : t("quakeInfo");
-  document.getElementById("quake-sub").textContent = isEew ? t("eewSub") : (ev.issueLabel || "");
+  // a 予報 (Wolfx) is not a warning: don't word it like one
+  document.getElementById("quake-sub").textContent =
+    isEew ? t(ev.warn === false ? "eewForecastSub" : "eewSub") : (ev.issueLabel || "");
 
   const badge = document.getElementById("quake-badge");
   badge.className = "intensity-badge " + (ev.maxScale > 0 ? scaleClass(ev.maxScale) : "i1");
@@ -388,12 +398,12 @@ function markStalePanels(health) {
 }
 
 // ---- WebSocket -------------------------------------------------------------
-// The server sends {"type":"ping"} every 25 s. A browser cannot notice a half-open
+// The server sends {"type":"ping"} every 10 s. A browser cannot notice a half-open
 // socket on its own (Wi-Fi blip, AP reboot: readyState stays OPEN, nothing ever
 // arrives — including the next EEW), so the watchdog below treats three missed
 // pings as dead and reconnects; the server replays any active event on connect.
 let ws = null, wsOpen = false, wsLastMsg = 0, wsWasConnected = false;
-const WS_STALE_MS = 3 * 25 * 1000;
+const WS_STALE_MS = 3 * 10 * 1000;
 // Reconnect quickly, but not at a fixed 3 s forever: a weekend backend outage
 // would be ~60k attempts per tablet. Doubling up to 20 s keeps the worst-case
 // delay small (the 60 s poll and the replay-on-connect cover the gap anyway).

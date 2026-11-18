@@ -438,3 +438,134 @@ def test_a_held_session_counts_and_the_flaps_after_it_stay_quiet(monkeypatch, ca
     assert svc.offline_for() >= 19 * 5 - 1, "offline_for should run from the end of the held session"
     assert sum("lost" in r.message for r in caplog.records) == 1
     assert not any("reconnected" in r.message for r in caplog.records), "a flap was logged as a recovery"
+
+
+# ------------------------------------------------------------ Wolfx 予報 feed
+def wolfx(serial=1, **over):
+    """A real Wolfx frame (佐渡付近, 予報 最大震度3), re-stamped as just announced."""
+    m = load_json("wolfx_jma_eew.json")
+    m.update({"Serial": serial,
+              "AnnouncedTime": E.datetime.datetime.now(E._JST).strftime("%Y/%m/%d %H:%M:%S")})
+    m.update(over)
+    return json.dumps(m, ensure_ascii=False)
+
+
+def p2p_warning(p2p_eews, serial):
+    """P2P's 556 (警報) for the same quake as the Wolfx fixture."""
+    warn = copy.deepcopy(p2p_eews[0])
+    warn["issue"].update(eventId="20261118183714", serial=str(serial))
+    return json.dumps(warn)
+
+
+def test_wolfx_forecast_normalizes_to_the_p2p_eew_shape(p2p_eews):
+    assert set(E.normalize_wolfx_eew(json.loads(wolfx(7)))) == set(E.normalize_eew(p2p_eews[0]))
+    svc, seen = make_service()
+    asyncio.run(svc.handle_wolfx(wolfx(7), 180))
+    [ev] = seen
+    assert ev["source"] == "wolfx" and ev["kind"] == "eew" and ev["warn"] is False
+    assert ev["id"] == "20261118183714" and ev["bulletin"] == "7予報"
+    assert ev["maxScale"] == 30 and ev["maxIntensity"] == "3" and ev["regions"] == []
+    assert ev["hypocenter"]["name"] == "佐渡付近" and ev["hypocenter"]["magnitude"] == 4.9
+
+
+def test_wolfx_repeats_and_late_serials_are_dropped():
+    svc, seen = make_service()
+    for s in (1, 1, 3, 2, 3, 4):
+        asyncio.run(svc.handle_wolfx(wolfx(s), 180))
+    assert [e["bulletin"] for e in seen] == ["1予報", "3予報", "4予報"]
+
+
+# Wolfx's documented WarnArea: Shindo1 is the area's upper bound, Shindo2 its lower
+AREAS = [
+    {"Chiiki": "新潟県佐渡", "Shindo1": "5弱", "Shindo2": "4", "Type": "警報", "Arrive": False},
+    {"Chiiki": "新潟県中越", "Shindo1": "4", "Shindo2": "3", "Type": "警報", "Arrive": False},
+    {"Chiiki": "北海道道南", "Shindo1": "5強", "Shindo2": "5弱", "Type": "警報", "Arrive": False},
+    {"Chiiki": "伊豆諸島北部", "Shindo1": "4", "Shindo2": "3", "Type": "警報", "Arrive": False},
+]
+
+
+def test_a_wolfx_warning_maps_its_areas_to_prefectures():
+    broken = [{"Chiiki": ["x"], "Shindo1": "6強"}, {"Chiiki": None, "Shindo1": "4"}, None, "x"]
+    ev = E.normalize_wolfx_eew(json.loads(
+        wolfx(3, isWarn=True, MaxIntensity="5強", WarnArea=AREAS + broken)))
+    assert ev["warn"] is True and ev["bulletin"] == "3警報" and ev["maxScale"] == 50
+    assert [(r["name"], r["label"]) for r in ev["regions"]] == [
+        ("北海道", "5強"), ("新潟県", "5弱"), ("伊豆諸島北部", "4")], "a malformed area must be skipped, not fatal"
+
+
+def test_an_assumed_hypocentre_shows_unknown_not_jmas_placeholders(p2p_eews):
+    """仮定震源要素: JMA's M1.0 / 10 km are placeholders, not a tiny shallow quake."""
+    assumed = [m for m in p2p_eews if (m.get("earthquake") or {}).get("condition") == "仮定震源要素"]
+    assert assumed, "fixture no longer has a 仮定震源要素 bulletin"
+    for m in assumed:
+        hypo = E.normalize_eew(m)["hypocenter"]
+        assert hypo["magnitude"] == -1 and hypo["depth"] == -1
+    hypo = E.normalize_wolfx_eew(json.loads(wolfx(1, isAssumption=True, Magnitude=1.0)))["hypocenter"]
+    assert hypo["magnitude"] == -1 and hypo["depth"] == -1
+    assert E.normalize_wolfx_eew(json.loads(wolfx(1)))["hypocenter"]["magnitude"] == 4.9
+
+
+def test_a_warning_goes_out_from_whichever_source_is_first(p2p_eews):
+    """A 警報 outranks a 予報 (same serial included); the faster source wins and the
+    other's copy re-renders (P2P's areas); nothing older or lower-ranked follows."""
+    warn = dict(isWarn=True, MaxIntensity="5弱", WarnArea=AREAS)
+    svc, seen = make_service()
+    asyncio.run(svc.handle_wolfx(wolfx(2), 180))                 # 予報 第2報
+    asyncio.run(svc.handle_wolfx(wolfx(2, **warn), 180))         # 警報 第2報 outranks it
+    asyncio.run(svc._handle(p2p_warning(p2p_eews, 2)))           # P2P's copy: re-render
+    asyncio.run(svc.handle_wolfx(wolfx(2, **warn), 180))         # repeat
+    asyncio.run(svc.handle_wolfx(wolfx(3), 180))                 # a 予報 never follows a 警報
+    asyncio.run(svc.handle_wolfx(wolfx(4, **warn), 180))         # newer 警報
+    asyncio.run(svc._handle(p2p_warning(p2p_eews, 3)))           # P2P late with an older one
+    asyncio.run(svc._handle(p2p_warning(p2p_eews, 4)))           # P2P's copy of the latest
+    assert [(e["source"], e["bulletin"]) for e in seen] == [
+        ("wolfx", "2予報"), ("wolfx", "2警報"), ("p2p", "2"), ("wolfx", "4警報"), ("p2p", "4")]
+
+    svc, seen = make_service()                                   # P2P first this time
+    asyncio.run(svc._handle(p2p_warning(p2p_eews, 1)))
+    asyncio.run(svc.handle_wolfx(wolfx(1, **warn), 180))
+    asyncio.run(svc.handle_wolfx(wolfx(1), 180))
+    assert [e["source"] for e in seen] == ["p2p"]
+
+    svc, seen = make_service()                                   # a 警報 fails safe on intensity
+    asyncio.run(svc.handle_wolfx(wolfx(1, isWarn=True, MaxIntensity="不明"), 180))
+    assert [e["maxScale"] for e in seen] == [-1]
+
+
+def test_wolfx_drops_replays_drills_unknown_intensity_and_noise():
+    replay = json.dumps(load_json("wolfx_jma_eew.json"), ensure_ascii=False)   # announced long ago
+    svc, seen = make_service()
+    for raw in [replay, wolfx(1, isTraining=True), wolfx(2, MaxIntensity="不明"),
+                wolfx(3, AnnouncedTime="garbage"), wolfx(None), wolfx(4, EventID=""),
+                '{"type":"heartbeat","ver":26}', "", "null", "[]", "{", "\x00"]:
+        asyncio.run(svc.handle_wolfx(raw, 180))
+    assert seen == []
+    svc, seen = make_service(show_test=True)
+    asyncio.run(svc.handle_wolfx(wolfx(1, isTraining=True), 180))
+    assert len(seen) == 1
+
+
+def test_a_wolfx_cancel_always_goes_out(p2p_eews):
+    """Retracting twice is harmless; a cancel lost because P2P had warned (or the
+    frame is marked 警報, or carries no intensity) would leave a false alarm up."""
+    svc, seen = make_service()
+    asyncio.run(svc.handle_wolfx(wolfx(1), 180))
+    asyncio.run(svc.handle_wolfx(wolfx(2, isCancel=True, MaxIntensity="不明"), 180))
+    assert [e["cancelled"] for e in seen] == [False, True]
+    assert svc.active() is None
+    svc, seen = make_service()
+    asyncio.run(svc._handle(p2p_warning(p2p_eews, 1)))
+    asyncio.run(svc.handle_wolfx(wolfx(2, isCancel=True, isWarn=True), 180))
+    assert [(e["source"], e["cancelled"]) for e in seen] == [("p2p", False), ("wolfx", True)]
+    assert svc.active() is None
+
+
+def test_wolfx_never_raises_on_mutated_frames():
+    rng = random.Random(4321)
+    base = json.loads(wolfx(1))
+    svc, _ = make_service()
+    for i in range(800):
+        m = {k: rng.choice([v, None, "☠", [], {}, -1, True]) if rng.random() < 0.3 else v
+             for k, v in base.items()}
+        m["Serial"] = i if rng.random() < 0.9 else m.get("Serial")
+        asyncio.run(svc.handle_wolfx(json.dumps(m, ensure_ascii=False), 180))   # must not raise

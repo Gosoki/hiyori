@@ -11,8 +11,11 @@
 - 平板（Windows）只需用浏览器全屏打开一个网址，**零框架、无额外性能开销**。
 - 数据源全部免费、无需 API key：
   - 天气：気象庁 (JMA) 今日/週間预报 + met.no (yr.no) 当天逐小时 — 点左上角地区名可切换城市(内置 12 个日本主要城市,默认東京)
-  - 地震：P2P地震情報 (WebSocket) — 地震情報(551) + 緊急地震速報 EEW(556);
-    **P2P 断线超过 5 分钟自动切到気象庁 XML 备用源**(仅地震情報,无 EEW),右上角 🗾 会亮琥珀色小点提示
+  - 地震：P2P地震情報 (WebSocket) — 地震情報(551) + 緊急地震速報 EEW(556,P2P 只转「警報」);
+    **緊急地震速報另接 Wolfx (WebSocket)**:补上 P2P 没有的「予報」,震度 3〜4 的地震也能在震度速报(约 90 秒)之前占屏;
+    「警報」两边哪边先到用哪边,且优先于「予報」(予報 不会盖住 警報);预警画面带一圈黄黑警戒线边框;
+    Wolfx 挂了就退回只有 P2P 的状态;
+    **P2P 断线超过 5 分钟自动切到気象庁 XML 备用源**(仅地震情報;EEW 只剩 Wolfx),右上角 🗾 会亮琥珀色小点提示
   - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,红色高亮,平时不显示;每 60 秒轮询、变化即推送到平板;其中 津波警報/特別警報/Jアラート 还会在**页面顶部拉出一条红色横幅**,3 小时内有效)
   - AI・テック：每台设备可在设置里切换 **中文**(量子位 + Solidot)/ **日本語**(ITmedia AI+)/ **Global**(Hacker News)
   - 汇率：open.er-api.com(底部小卡片,双向显示,保留小数;结果整数部分不足 1 时基数 ×10,如 `100円=4.201元`)
@@ -124,6 +127,7 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --user-data-dir=C:\hiyori-
 | 全屏最小震度(默认值) | `EARTHQUAKE_MIN_SCALE`（默认 30=震度3；每台设备可在设置里改。10=1 40=4 45=5弱…） |
 | 汇率货币对 | `FX_BASE` / `FX_QUOTE`（币种代码,如 CNY/JPY）+ `FX_BASE_LABEL` / `FX_QUOTE_LABEL`（显示名,如 元/円） |
 | 是否显示 EEW 训练报 | `EARTHQUAKE_SHOW_TEST` |
+| 关掉 Wolfx 预警源 | `WOLFX_EEW_WS_URL = ""`（关掉后只剩 P2P 的「警報」,没有「予報」） |
 | 默认语言 | `DEFAULT_LANGUAGE`（`ja`/`zh`/`en`） |
 | 加新语言 | 在 `frontend/i18n.js` 复制一个语言块翻译即可 |
 
@@ -219,7 +223,7 @@ ws://<IP>:12345/ws
   后端每 `ALERT_REFRESH`(60 秒)条件轮询一次 NERV,不再跟着 5 分钟的新闻循环走——
   以前一条海啸警报要等新闻循环 + 平板 5 分钟轮询,最坏约 10 分钟才上墙,现在约 1 分钟。
   平板收到后立刻重取 `/api/news`(警报置顶在主要ニュース栏,`/api/news` 在请求时合成,不等新闻刷新)。
-- `ping`:每 25 秒一次的心跳。浏览器自己发现不了半开的 WebSocket(Wi-Fi 闪断后 readyState 仍是 OPEN、
+- `ping`:每 10 秒一次的心跳。浏览器自己发现不了半开的 WebSocket(Wi-Fi 闪断后 readyState 仍是 OPEN、
   却什么都收不到,包括下一条緊急地震速報);平板连续 3 次没收到心跳就主动重连,服务端连接时会补推仍在保持期内的事件。
 
 ---
@@ -236,7 +240,7 @@ hiyori/
 │   ├── fx.py               汇率抓取 (open.er-api)
 │   ├── anime.py            今日新番放送 (Jikan/MAL)
 │   ├── holiday.py          日本祝日倒计时 (holidays-jp)
-│   ├── earthquake.py       P2P地震情報 WebSocket 客户端
+│   ├── earthquake.py       P2P地震情報 WebSocket 客户端 + Wolfx 予報解析
 │   ├── earthquake_jma.py   気象庁 XML 备用地震源（P2P 挂掉时接管）
 │   ├── requirements.txt
 │   └── run.sh
@@ -281,4 +285,4 @@ file for details.
 
 第三方素材/数据(各自版权方所有,非本项目 GPL 覆盖):
 - 地图边界:[dataofjapan/land](https://github.com/dataofjapan/land)(MIT)
-- 数据源:気象庁 (JMA) / P2P地震情報 / NHK・Yahoo!・Hacker News・ITmedia (RSS)
+- 数据源:気象庁 (JMA) / P2P地震情報 / Wolfx / NHK・Yahoo!・Hacker News・ITmedia (RSS)

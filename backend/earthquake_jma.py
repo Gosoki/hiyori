@@ -6,7 +6,7 @@ own publication feed and keep the quake screen alive.
 
 What this is NOT: a replacement for P2P. JMA publishes by *polling* Atom feed, so
 reports land up to a minute late, and the public feed carries no 緊急地震速報 —
-during a P2P outage there is no EEW, only 地震情報 after the fact. main.py only
+during a P2P outage this adds only 地震情報 after the fact (EEW: Wolfx alone). main.py only
 runs this while P2P is down, and the frontend flags the degraded state.
 
 Reports are normalized into exactly the shape earthquake.normalize_quake produces,

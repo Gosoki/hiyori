@@ -241,7 +241,7 @@ async function init() {
   setInterval(pollHealth, 2 * 60 * 1000);       // badge + stale marks; the backend's own fallback threshold is 5 min, so nothing here moves faster
   setInterval(() => renderAlertBanner(lastBannerItems), 60 * 1000);   // let a banner age out between news polls
   setInterval(loadRecentQuakes, 15 * 60 * 1000); // WS keeps the list live; 🗾 open + WS-reconnect also refresh it
-  setInterval(watchWS, 15 * 1000);              // reconnect a half-open socket (see quake.js)
+  setInterval(watchWS, 5 * 1000);               // reconnect a half-open socket (see quake.js)
   startColdStartRetry([                         // until each panel has painted once (see core.js)
     { has: () => !!lastWeather, load: loadWeather },
     { has: () => !!lastHourly, load: loadHourly },

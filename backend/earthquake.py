@@ -6,6 +6,10 @@ single event shape the frontend understands:
   code 551  地震情報 (JMAQuake) — a real earthquake report with intensities
   code 556  緊急地震速報 EEW (JMAEEW) — early warning, may arrive before shaking
 
+P2P relays only the EEW 警報 (5弱+ predicted). Wolfx's JMA EEW relay (handle_wolfx)
+adds the far more common 予報, and a second path for 警報; both are normalized to
+the same shape. A 警報 outranks a 予報: once one is out, a quake's 予報 stop.
+
 Numbers (magnitude, depth, intensity) are sent raw so the frontend can format
 and localize them. Japanese place names are passed through unchanged.
 """
@@ -13,6 +17,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 import time
 
 import httpx
@@ -20,6 +25,7 @@ import websockets
 
 log = logging.getLogger("hiyori.earthquake")
 P2P_HISTORY_URL = "https://api.p2pquake.net/v2/history"
+_JST = datetime.timezone(datetime.timedelta(hours=9))
 _startup = time.time()   # so offline_for() is meaningful before the first connect
 
 # JMA 震度 (shindo) scale code -> label
@@ -116,6 +122,8 @@ def normalize_quake(msg):
 def normalize_eew(msg):
     eq = _obj(msg, "earthquake")
     hypo = _obj(eq, "hypocenter")
+    # 仮定震源要素 (PLUM etc.): JMA fills in M1.0 / 10 km as placeholders — unknown, not small
+    assumed = eq.get("condition") == "仮定震源要素"
     issue = _obj(msg, "issue")
     areas = _dicts(msg, "areas")
 
@@ -135,8 +143,8 @@ def normalize_eew(msg):
         "originTime": eq.get("originTime", ""),
         "hypocenter": {
             "name": hypo.get("name", "") or hypo.get("reduceName", "") or "調査中",
-            "depth": hypo.get("depth", -1),
-            "magnitude": hypo.get("magnitude", -1),
+            "depth": -1 if assumed else hypo.get("depth", -1),
+            "magnitude": -1 if assumed else hypo.get("magnitude", -1),
             "latitude": hypo.get("latitude", -200),
             "longitude": hypo.get("longitude", -200),
         },
@@ -145,6 +153,71 @@ def normalize_eew(msg):
         "tsunami": "Unknown",
         "regions": regions,
         "cancelled": bool(msg.get("cancelled", False)),
+        "warn": True,                                # P2P relays 警報 only
+    }
+
+
+# Wolfx sends the 最大予測震度 as a label, not P2P's scale code.
+WOLFX_SCALE = {"1": 10, "2": 20, "3": 30, "4": 40, "5弱": 45, "5-": 45, "5強": 50, "5+": 50,
+               "6弱": 55, "6-": 55, "6強": 60, "6+": 60, "7": 70}
+
+
+# A 警報 area ("岩手県沿岸北部", "北海道道央") → its prefecture, the unit P2P uses.
+_PREF = re.compile(r"北海道|東京都|京都府|大阪府|.{2,3}?県")
+
+
+def _wolfx_scale(label):
+    return WOLFX_SCALE.get(str(label or "").strip(), -1)
+
+
+def _wolfx_pref(chiiki):
+    name = chiiki if isinstance(chiiki, str) else ""   # a malformed area is skipped, not fatal
+    m = _PREF.match(name)
+    return m.group() if m else name
+
+
+def _serial(bulletin):
+    """The JMA serial at the head of an EEW bulletin ("3", "3予報", "3警報"); -1 if none."""
+    m = re.match(r"\d+", str(bulletin or ""))
+    return int(m.group()) if m else -1
+
+
+def normalize_wolfx_eew(msg):
+    """A Wolfx `jma_eew` frame → the normalize_eew() shape.
+
+    Keyed exactly like P2P's 556: Wolfx's EventID is JMA's, the same value P2P sends
+    as issue.eventId, so both sources' reports of one quake share one screen. Only a
+    警報 lists areas (WarnArea, Shindo1 = the area's upper bound, like P2P's scaleTo);
+    a 予報 has none, so the map shows the epicentre only.
+    """
+    warn = bool(msg.get("isWarn", False))
+    assumed = bool(msg.get("isAssumption", False))   # see normalize_eew
+    regions = _regions_from(
+        (_wolfx_pref(a.get("Chiiki")), _wolfx_scale(a.get("Shindo1"))) for a in _dicts(msg, "WarnArea"))
+    s = _wolfx_scale(msg.get("MaxIntensity"))
+    if s < 0:
+        s = max((r["scale"] for r in regions), default=-1)
+    return {
+        "kind": "eew",
+        "id": str(msg.get("EventID") or ""),
+        # JMA's serial, but marked: P2P's own copy of the same 第N報 (with P2P's
+        # areas) must not look like a repeat to the tablets, which skip a bulletin
+        # that is already on screen.
+        "bulletin": f"{msg.get('Serial', '')}{'警報' if warn else '予報'}",
+        "originTime": msg.get("OriginTime", ""),
+        "hypocenter": {
+            "name": msg.get("Hypocenter") or "調査中",
+            "depth": -1 if assumed else msg.get("Depth", -1),
+            "magnitude": -1 if assumed else msg.get("Magnitude", msg.get("Magunitude", -1)),
+            "latitude": msg.get("Latitude", -200),
+            "longitude": msg.get("Longitude", -200),
+        },
+        "maxScale": s,
+        "maxIntensity": scale_label(s),
+        "tsunami": "Unknown",
+        "regions": regions,
+        "cancelled": bool(msg.get("isCancel", False)),
+        "warn": warn,
     }
 
 
@@ -230,6 +303,7 @@ class EarthquakeService:
         self.last_error = ""
         self._announced_loss = False      # a loss was logged and no recovery yet
         self._recovery_pending = None     # `opened` of a session whose recovery is not yet announced
+        self._eew_seen = {}               # EEW eventId -> (highest serial, highest 警報 serial) published
 
     def active(self):
         if self.current and self.current.get("expiresAt", 0) > _now():
@@ -277,7 +351,7 @@ class EarthquakeService:
             opened, timer = 0.0, None
             try:
                 async with websockets.connect(
-                    self.url, ping_interval=30, ping_timeout=20,
+                    self.url, ping_interval=15, ping_timeout=10,
                     open_timeout=15, max_queue=64,
                 ) as ws:
                     opened = _now()
@@ -341,7 +415,63 @@ class EarthquakeService:
             # One weird bulletin must not propagate to run()'s reconnect handler:
             # that would drop the feed for 5s — exactly when quakes come in bursts.
             return
+        if code == 556 and not event["cancelled"] and \
+                _serial(event["bulletin"]) < self._eew_seen.get(event["id"], (-1, -1))[1]:
+            return    # Wolfx put out a later 第N報 first; P2P's copy of the SAME one still goes out
         await self.publish(event)
+
+    async def handle_wolfx(self, raw, max_age):
+        """One frame from Wolfx's JMA EEW relay. Publishes what is news:
+
+        - a 警報 newer than any 警報 already out for its quake, from either source
+          (whichever source is faster wins; P2P's copy still goes out after it,
+          with P2P's areas — a re-render, never a second screen);
+        - a 予報 newer than anything out for its quake, and only while no 警報 is:
+          a 警報 outranks it, a 予報 must never cover one;
+        - never a report older than `max_age` — a replay (e.g. on connect), not news;
+        - never a 予報 without a predicted intensity: unlike a 警報 (5弱+ somewhere
+          by definition) it is no reason to take every screen over.
+        A cancellation always goes out: retracting twice is harmless, missing one
+        would leave a false alarm up for the whole hold.
+        """
+        try:
+            msg = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(msg, dict) or msg.get("type") != "jma_eew":
+            return                                # heartbeats
+        if msg.get("isTraining") and not self.show_test:
+            return
+        try:
+            announced = datetime.datetime.strptime(
+                msg.get("AnnouncedTime"), "%Y/%m/%d %H:%M:%S").replace(tzinfo=_JST)
+            serial = int(msg.get("Serial"))
+            event = normalize_wolfx_eew(msg)
+        except Exception:
+            return                                # same rule as _handle: never raise
+        if not event["id"] or not _now() - announced.timestamp() < max_age:
+            return
+        if not event["cancelled"]:
+            top, top_warn = self._eew_seen.get(event["id"], (-1, -1))
+            if event["warn"]:
+                if serial <= top_warn:
+                    return
+            elif top_warn >= 0 or serial <= top or event["maxScale"] < 0:
+                return
+        await self.publish(event, source="wolfx")
+
+    def _note_eew(self, event):
+        """Per EEW event: the highest serial published, and the highest 警報 serial
+        (P2P's are all 警報) — the gate handle_wolfx() applies."""
+        eid, serial = event.get("id"), _serial(event.get("bulletin"))
+        if not eid or serial < 0:
+            return
+        top, top_warn = self._eew_seen.pop(eid, (-1, -1))
+        if event.get("warn") is not False:
+            top_warn = max(top_warn, serial)
+        self._eew_seen[eid] = (max(top, serial), top_warn)
+        while len(self._eew_seen) > 64:           # oldest first; hours of quakes
+            del self._eew_seen[next(iter(self._eew_seen))]
 
     async def publish(self, event, source="p2p"):
         """Stamp an event with its hold window, fold it into the 🗾 list, broadcast.
@@ -350,6 +480,8 @@ class EarthquakeService:
         produce identical behaviour on the tablets.
         """
         event.setdefault("source", source)
+        if event["kind"] == "eew":
+            self._note_eew(event)
         now = _now()
         event["receivedAt"] = datetime.datetime.now(
             datetime.timezone(datetime.timedelta(hours=9))

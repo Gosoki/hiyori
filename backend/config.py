@@ -84,12 +84,21 @@ ALERT_BANNER_KEYWORDS = ["大津波警報", "津波警報", "津波注意報", "
 # --- Earthquake (P2P地震情報 v2 WebSocket, free, no key) ---------------------
 P2P_WS_URL = "wss://api.p2pquake.net/v2/ws"
 
+# 緊急地震速報 from Wolfx's JMA EEW relay (free, no key). P2P relays only the 警報
+# (5弱+ predicted), so without this a 震度3–4 quake shows nothing until JMA's 震度速報,
+# ~90 s after the shaking starts; a 予報 goes out seconds after detection. Wolfx is
+# also a second path for 警報 (whichever source is first). Optional: while Wolfx is
+# down the behaviour is exactly P2P-only. "" disables it.
+WOLFX_EEW_WS_URL = "wss://ws-api.wolfx.jp/jma_eew"
+WOLFX_EEW_MAX_AGE = 180   # older reports (s, by JMA's announce time) are replays, not news
+
 # Backup 地震情報 source (気象庁 XML feed, free, no key). P2P is a single point of
 # failure for the one feature here that actually matters, so when its WebSocket has
 # been down for EARTHQUAKE_FALLBACK_AFTER seconds the backend starts polling JMA
 # directly. It is a safety net, not a replacement: polling lags the push by up to a
-# minute and JMA's public feed carries no EEW, so 緊急地震速報 is unavailable while
-# P2P is down. The 🗾 button turns amber on every tablet whenever this is in play.
+# minute and JMA's public feed carries no EEW, so while P2P is down 緊急地震速報
+# come from Wolfx alone. The 🗾 button turns amber on every tablet whenever this is
+# in play.
 # Set EARTHQUAKE_FALLBACK_AFTER = 0 to disable the fallback entirely.
 JMA_QUAKE_FEED = "https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml"
 EARTHQUAKE_FALLBACK_AFTER = 300   # P2P silent this long (s) → start polling JMA

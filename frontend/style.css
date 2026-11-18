@@ -407,6 +407,13 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
 .quake-banner { position: relative; }
 .quake-banner::after { content: ""; position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 #quake-overlay.is-eew .quake-banner::after { animation: pulse-wash 1s ease-in-out infinite; }
+/* EEW (警報・予報): a thin caution-tape frame. A pseudo-element, so it takes no
+   layout space; border-image with slice = border width shows the stripes 1:1. */
+#quake-overlay.is-eew::after {
+  content: ""; position: absolute; inset: 0; z-index: 50; pointer-events: none;
+  border: 8px solid #f5c400;
+  border-image: repeating-linear-gradient(-45deg, #f5c400 0 12px, #111 12px 24px) 8;
+}
 @keyframes pulse-wash { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
 
 .quake-close {

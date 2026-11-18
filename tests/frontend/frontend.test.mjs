@@ -364,6 +364,42 @@ test("dismissing an early bulletin does not silence an escalation of the same ev
   assert.ok(!hidden(), "a follow-up adding 津波警報 must reopen");
 });
 
+test("a 予報 is not worded as a warning, and P2P's 警報 of the same serial replaces it", async (t) => {
+  const { ev, txt } = boot(t);
+  await settle();
+  ev("hideQuake(); dismissedBase=null; minScale=30;");
+  const eew = (o) => quake({ kind: "eew", id: "EV7", originTime: "2026/08/05 21:00:00", tsunami: "Unknown", ...o });
+  ev(`handleQuake(${JSON.stringify(eew({ bulletin: "3予報", warn: false, maxScale: 40, maxIntensity: "4", regions: [] }))})`);
+  assert.equal(txt("quake-sub"), ev('t("eewForecastSub")'));
+  ev(`handleQuake(${JSON.stringify(eew({ bulletin: "3", warn: true, maxScale: 45, maxIntensity: "5弱" }))})`);
+  assert.equal(txt("quake-sub"), ev('t("eewSub")'), "the 警報 was skipped as a repeat of the 予報");
+});
+
+test("a 警報 always shows, outranks a 予報, and a 予報 never covers it", async (t) => {
+  const { ev, $ } = boot(t);
+  await settle();
+  const hidden = () => $("quake-overlay").classList.contains("hidden");
+  const eew = (o) => quake({ kind: "eew", originTime: "2026/08/05 21:00:00", tsunami: "Unknown", ...o });
+  ev("hideQuake(); dismissedBase=null; minScale=45;");
+  // a 予報 below this tablet's threshold stays off; a 警報 shows whatever the threshold
+  ev(`handleQuake(${JSON.stringify(eew({ id: "A", bulletin: "1予報", warn: false, maxScale: 40, maxIntensity: "4" }))})`);
+  assert.ok(hidden());
+  ev(`handleQuake(${JSON.stringify(eew({ id: "A", bulletin: "2", warn: true, maxScale: 40, maxIntensity: "4" }))})`);
+  assert.ok(!hidden(), "a 警報 must show regardless of the threshold");
+  assert.ok($("quake-overlay").classList.contains("is-eew"), "no caution-tape frame");
+  // another quake's 予報 must not cover the live 警報
+  ev("minScale=30;");
+  ev(`handleQuake(${JSON.stringify(eew({ id: "B", bulletin: "1予報", warn: false, maxScale: 40, maxIntensity: "4" }))})`);
+  assert.equal(ev("shownEvent.id"), "A", "a 予報 covered a 警報");
+  // a dismissed 予報 does not hold back its quake's 警報, even one of unknown intensity
+  ev("hideQuake(); dismissedBase=null;");
+  ev(`handleQuake(${JSON.stringify(eew({ id: "C", bulletin: "1予報", warn: false, maxScale: 40, maxIntensity: "4" }))})`);
+  assert.ok($("quake-overlay").classList.contains("is-eew"), "a 予報 also gets the frame");
+  ev("closeQuake()");
+  ev(`handleQuake(${JSON.stringify(eew({ id: "C", bulletin: "2", warn: true, maxScale: -1, maxIntensity: "" }))})`);
+  assert.ok(!hidden(), "the dismissed 予報 held back its 警報");
+});
+
 test("a replay of the bulletin already on screen keeps its countdown", async (t) => {
   const { ev, txt } = boot(t);
   await settle();

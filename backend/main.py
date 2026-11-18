@@ -16,6 +16,7 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 # embedding app), so it is safe to run at import.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
 
+import websockets
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -228,7 +229,7 @@ async def pump_loop():
             log.exception("broadcast failed for %s", (message or {}).get("type"))
 
 
-HEARTBEAT = 25   # seconds between application-level pings to every tablet
+HEARTBEAT = 10   # seconds between application-level pings to every tablet
 
 
 async def heartbeat_loop():
@@ -455,7 +456,7 @@ async def quake_fallback_loop():
                 active = False
         elif not active:
             log.warning("P2P offline for %ds — falling back to the JMA XML feed "
-                        "(地震情報 only, no EEW)", round(offline))
+                        "(地震情報 only; EEW from Wolfx alone)", round(offline))
             active = True
         try:
             events = await fetch_jma_reports(config.JMA_QUAKE_FEED, seen,
@@ -472,6 +473,44 @@ async def quake_fallback_loop():
             log.warning("JMA fallback: publishing %s %s",
                         event.get("originTime"), event.get("hypocenter", {}).get("name"))
             await eq_service.publish(event, source="jma")
+
+
+async def wolfx_eew_loop():
+    """Wolfx's JMA EEW relay: the 予報 P2P does not carry, and a second path for
+    警報 (see config and EarthquakeService.handle_wolfx).
+
+    Optional by design: while Wolfx is down the tablets get exactly the P2P-only
+    behaviour, so it shows in /api/health but never on the 🗾 badge.
+    """
+    if not config.WOLFX_EEW_WS_URL:
+        return
+    h = health("earthquake.wolfx")
+    delay = 5
+    while True:
+        opened = 0.0
+        try:
+            async with websockets.connect(
+                config.WOLFX_EEW_WS_URL, ping_interval=15, ping_timeout=10,
+                open_timeout=15, max_queue=64,
+            ) as ws:
+                opened = time.time()
+                async for raw in ws:
+                    # Wolfx heartbeats every 60 s. Count the link as up only once a
+                    # session has lasted about that long, so a server that accepts
+                    # and drops can't log a recovered/failed pair every few seconds.
+                    if time.time() - opened >= 50:
+                        h.succeeded()
+                    await eq_service.handle_wolfx(raw, config.WOLFX_EEW_MAX_AGE)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:                    # noqa: BLE001
+            h.failed(e)
+        else:
+            h.failed(ConnectionError("closed by server"))
+        # back off while sessions keep dying young: a flapping or dead Wolfx costs
+        # one attempt every 2 min, not one every 5 s
+        delay = 5 if opened and time.time() - opened >= 60 else min(delay * 2, 120)
+        await asyncio.sleep(delay)
 
 
 async def recent_quake_loop():
@@ -521,6 +560,7 @@ async def lifespan(app):
         asyncio.create_task(recent_quake_loop()),
         asyncio.create_task(quake_fallback_loop()),
         asyncio.create_task(eq_service.run()),
+        asyncio.create_task(wolfx_eew_loop()),
     ]
     yield
     for t in tasks:
@@ -557,7 +597,7 @@ app = FastAPI(
         "`{\"type\":\"earthquake\",\"event\":{…}}` — on connect, any still-active event is "
         "replayed immediately. See the **earthquake** tag for the event shape. The same "
         "socket carries `{\"type\":\"alerts\",\"items\":[…]}` whenever the pinned severe "
-        "alerts (NERV) change, and a `{\"type\":\"ping\"}` heartbeat every 25 s.\n\n"
+        "alerts (NERV) change, and a `{\"type\":\"ping\"}` heartbeat every 10 s.\n\n"
         "All tunables live in `config.py`; restart the backend after editing."
     ),
     openapi_tags=TAGS_METADATA,
