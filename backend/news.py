@@ -103,7 +103,7 @@ async def fetch_news(feeds_by_category, max_per_category):
     return result
 
 
-async def fetch_alerts(feed_url, keywords, max_n, cond=None, banner_keywords=()):
+async def fetch_alerts(feed_url, keywords, max_n, cond=None, banner_keywords=(), only_if=None):
     """Severe real-time disaster alerts from NERV (特務機関NERV). NERV posts every
     prefecture's routine advisory too, so we keep only titles containing a severe
     keyword — usually nothing, which is the point.
@@ -117,6 +117,9 @@ async def fetch_alerts(feed_url, keywords, max_n, cond=None, banner_keywords=())
 
     Items whose full text matches one of `banner_keywords` — and that are not
     announcing a lift (解除) — are flagged `banner: True` for the tablets' banner.
+
+    `only_if` ({title keyword: required text}) keeps a matching post only if its
+    title or body also contains the required text (see config.ALERT_ONLY_IF).
     """
     async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=UA) as client:
         if cond is None:
@@ -139,6 +142,9 @@ async def fetch_alerts(feed_url, keywords, max_n, cond=None, banner_keywords=())
         body = re.sub(r"<[^>]+>", " ", body)                       # strip HTML tags
         body = re.sub(r"(?:\s*[#＃]\s*[^\s#＃]+)+\s*$", "", body)     # drop trailing hashtags
         body = re.sub(r"\s+", " ", body).strip()
+        need = next((v for k, v in (only_if or {}).items() if k in title), None)
+        if need and need not in title + body:
+            continue
         headline = body or title
         # trim the 【…】 header to just the alert type (drop the report no. + date)
         headline = re.sub(r"^【([^】\s]+)[^】]*】", r"【\1】", headline)

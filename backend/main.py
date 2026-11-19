@@ -320,8 +320,11 @@ async def news_loop():
 
 
 def japan_column():
-    """主要ニュース as served: severe alerts pinned first, then Google News Top."""
-    alerts = latest["alerts"] or []
+    """主要ニュース as served: severe alerts pinned first, then Google News Top.
+    Alerts older than ALERT_MAX_AGE are dropped here, at serve time, so the cap
+    holds even while NERV is unreachable and `latest` keeps its last-good rows."""
+    cutoff = time.time() - config.ALERT_MAX_AGE
+    alerts = [a for a in (latest["alerts"] or []) if not a.get("ts") or a["ts"] >= cutoff]
     return (alerts + (latest["japan"] or []))[:config.NEWS_MAX_PER_CATEGORY]
 
 
@@ -339,7 +342,8 @@ async def refresh_alerts(cond):
     """
     try:
         fresh = await fetch_alerts(config.ALERT_FEED, config.ALERT_KEYWORDS, config.ALERT_MAX,
-                                   cond=cond, banner_keywords=config.ALERT_BANNER_KEYWORDS)
+                                   cond=cond, banner_keywords=config.ALERT_BANNER_KEYWORDS,
+                                   only_if=config.ALERT_ONLY_IF)
     except Exception as e:
         health("alerts").failed(e)
         return False

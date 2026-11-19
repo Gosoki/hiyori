@@ -58,6 +58,16 @@ def _alert(title):
     return {"title": title, "link": "", "source": "NERV", "ts": 0, "alert": True}
 
 
+def test_a_pinned_alert_leaves_after_alert_max_age():
+    """Even with NERV down (last-good kept forever), a row is gone after 12 h."""
+    import time
+    main.latest["alerts"] = [dict(_alert("【津波警報】新"), ts=time.time() - 3600),
+                             dict(_alert("【津波警報】旧"), ts=time.time() - main.config.ALERT_MAX_AGE - 1)]
+    main.latest["japan"] = []
+    assert [a["title"] for a in main.japan_column()] == ["【津波警報】新"]
+    main.latest["alerts"] = None
+
+
 def test_new_alert_is_stored_and_pushed(monkeypatch, sent):
     async def fetch(*a, **kw):
         return [_alert("【津波警報】…")]

@@ -218,6 +218,43 @@ def test_a_real_tsunami_warning_is_kept_and_flagged_for_the_banner(monkeypatch):
     assert plain[0]["title"] == out[0]["title"] and plain[0]["banner"] is False
 
 
+def test_only_the_eew_warning_post_is_pinned(monkeypatch):
+    """Real NERV posts from the 2026-11-08 01:04 愛知 quake (最大震度5強): its 予報
+    bulletins are routine and must not pin a red row; the 警報 post must."""
+    import asyncio
+    import feedparser
+    import config
+    rss = """<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>NERV</title>
+<item><title>UN_NERV: “《緊急地震速報（気象庁発表）》…”</title>
+<description>&lt;p&gt;《緊急地震速報（気象庁発表）》 愛知県で地震 強い揺れに警戒 〈強い揺れが予想される地域〉 愛知 静岡 岐阜&lt;/p&gt;</description>
+<pubDate>Sat, 07 Nov 2026 16:04:53 +0000</pubDate></item>
+<item><title>UN_NERV: “【緊急地震速報 第6報 2026年11月8日】…”</title>
+<description>&lt;p&gt;【緊急地震速報 第6報 2026年11月8日】 1時4分頃、愛知県東部を震源とする地震がありました。地震の規模はM5.5程度、最大震度5弱程度と推定されています。この情報は気象庁の予報に基づく推定です。&lt;/p&gt;</description>
+<pubDate>Sat, 07 Nov 2026 16:04:53 +0000</pubDate></item>
+</channel></rss>"""
+    parsed = feedparser.parse(rss)
+
+    async def fake_parse(client, url):
+        return parsed
+
+    monkeypatch.setattr(N, "_parse_feed", fake_parse)
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(N.httpx, "AsyncClient", lambda *a, **kw: Client())
+    out = asyncio.run(N.fetch_alerts("u", config.ALERT_KEYWORDS, config.ALERT_MAX,
+                                     only_if=config.ALERT_ONLY_IF))
+    assert len(out) == 1 and out[0]["title"].startswith("《緊急地震速報（気象庁発表）》")
+    assert "強い揺れに警戒" in out[0]["title"]
+    both = asyncio.run(N.fetch_alerts("u", config.ALERT_KEYWORDS, config.ALERT_MAX))
+    assert len(both) == 2, "without only_if the filter must be unchanged"
+
+
 def test_a_lifted_warning_never_banners():
     import asyncio
     import feedparser

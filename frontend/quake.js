@@ -107,10 +107,25 @@ function handleQuake(ev) {
   scheduleHide(ev.holdFor ? Date.now() / 1000 + ev.holdFor : ev.expiresAt);
 }
 
+// ✕ sits exactly where 🗾 is, so one spot opens and closes the quake screen. 🗾's
+// place depends on the header (a live alert banner pushes it down, sizes are
+// clamp()ed), so measure it rather than mirror it in CSS.
+function alignQuakeClose() {
+  if (overlay.classList.contains("hidden")) return;
+  const tb = document.getElementById("quake-toggle").getBoundingClientRect();
+  if (!tb.width) return;                           // not laid out: keep the CSS position
+  const btn = document.getElementById("quake-close");
+  const r = btn.offsetWidth / 2;
+  btn.style.top = Math.max(0, tb.top + tb.height / 2 - r) + "px";
+  btn.style.right = Math.max(0, window.innerWidth - (tb.left + tb.width / 2) - r) + "px";
+}
+window.addEventListener("resize", alignQuakeClose);
+
 function showQuakeLayout(ev) {
   shownEvent = ev || null;
   if (ev) renderQuake(ev); else renderEmptyQuake();
   overlay.classList.remove("hidden");
+  alignQuakeClose();
   overlay.classList.toggle("is-eew", !!ev && ev.kind === "eew");
   document.getElementById("quake-toggle").classList.add("active");
 }
@@ -179,6 +194,7 @@ function selectRecent(i) {
   shownEvent = ev;
   renderQuake(ev);
   overlay.classList.remove("hidden");
+  alignQuakeClose();
   overlay.classList.remove("is-eew");
   document.getElementById("quake-toggle").classList.add("active");
   document.querySelectorAll("#quake-recent .rq-item").forEach((el, k) =>

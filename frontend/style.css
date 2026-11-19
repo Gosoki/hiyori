@@ -431,7 +431,7 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
   font-size: var(--fs-md);
   line-height: 1;
   cursor: pointer;
-  z-index: 2;
+  z-index: 60;            /* above the EEW caution-tape frame (50): it may sit on the edge */
 }
 .quake-close:hover { background: rgba(40, 48, 60, 0.92); }
 

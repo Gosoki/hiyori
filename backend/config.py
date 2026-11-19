@@ -66,7 +66,14 @@ NEWS_MAX_PER_CATEGORY = 12   # max headlines kept per column (alerts + Google Ne
 # and those items are pinned to the top of the main-news column, highlighted.
 ALERT_FEED = "https://unnerv.jp/@UN_NERV.rss"
 ALERT_KEYWORDS = ["特別警報", "津波", "緊急地震速報", "噴火", "Ｊアラート", "Jアラート", "記録的短時間大雨"]
+# A post matching a key here is pinned only if its text also contains the value.
+# NERV posts every 緊急地震速報 予報 bulletin (【緊急地震速報 第N報】, routine, and the
+# quake screen already shows it); only its 警報 post carries 強い揺れに警戒.
+ALERT_ONLY_IF = {"緊急地震速報": "強い揺れに警戒"}
 ALERT_MAX = 3
+# A pinned row normally leaves when NERV's RSS (its newest 20 posts) moves past it;
+# this caps it anyway — also when NERV is down and the last-good rows would stay forever.
+ALERT_MAX_AGE = 12 * 3600   # seconds since the post
 # The alert feed is polled on its own clock, faster than the news, and any change is
 # pushed to the tablets over the WebSocket at once (they then refetch /api/news).
 # A tsunami warning riding along with the 5-minute news refresh — plus the tablets'

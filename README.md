@@ -16,7 +16,7 @@
     「警報」两边哪边先到用哪边,且优先于「予報」(予報 不会盖住 警報);预警画面带一圈黄黑警戒线边框;
     Wolfx 挂了就退回只有 P2P 的状态;
     **P2P 断线超过 5 分钟自动切到気象庁 XML 备用源**(仅地震情報;EEW 只剩 Wolfx),右上角 🗾 会亮琥珀色小点提示
-  - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,红色高亮,平时不显示;每 60 秒轮询、变化即推送到平板;其中 津波警報/特別警報/Jアラート 还会在**页面顶部拉出一条红色横幅**,3 小时内有效)
+  - 主要ニュース：Google ニュース トップ(按跨媒体报道量排序 → 重大事件优先),置顶 **NERV 严重灾害警报**(特別警報/津波/緊急地震速報/噴火/Jアラート,緊急地震速報 只置顶「警報」帖,最多 3 条,红色高亮,平时不显示;每 60 秒轮询、变化即推送到平板;其中 津波警報/特別警報/Jアラート 还会在**页面顶部拉出一条红色横幅**,3 小时内有效)
   - AI・テック：每台设备可在设置里切换 **中文**(量子位 + Solidot)/ **日本語**(ITmedia AI+)/ **Global**(Hacker News)
   - 汇率：open.er-api.com(底部小卡片,双向显示,保留小数;结果整数部分不足 1 时基数 ×10,如 `100円=4.201元`)
   - 新番：AniList,挂了自动切 Jikan (MyAnimeList)(底部小卡片,广播日 00:00→次日 06:00 的 TV 放送,时间序,3×3 网格,傍晚 18 点后剔除已播)
@@ -122,7 +122,7 @@ chrome.exe --kiosk --app=http://<linux机器IP>:12345 --user-data-dir=C:\hiyori-
 | 切换城市 / AI 源 | 平板上点左上角地区名进设置选(每台设备各自记忆);默认值改 `DEFAULT_CITY` / `DEFAULT_AI_SOURCE` |
 | 增删城市 | 改 `config.py` 的 `CITIES` 列表(加一行:id / 名称 / JMA `area_code` `class10_code` / 经纬度,码见 [JMA area.json](https://www.jma.go.jp/bosai/common/const/area.json)) |
 | 增删 AI 源分组 | 改 `AI_SOURCES`(加一组:id / 显示名 / mode / feeds);主要ニュース源改 `NEWS_JAPAN` |
-| 严重灾害警报关键词 | `ALERT_KEYWORDS`(想收台风/暴风就加 `"台風"` `"暴風"`);`ALERT_FEED` 为 NERV 源;`ALERT_REFRESH` 为轮询间隔(默认 60 秒,条件请求,变化即推送) |
+| 严重灾害警报关键词 | `ALERT_KEYWORDS`(想收台风/暴风就加 `"台風"` `"暴風"`);`ALERT_ONLY_IF` 限定某类只置顶带指定字样的帖(如 緊急地震速報 须含「強い揺れに警戒」);`ALERT_MAX` 置顶条数(默认 3);`ALERT_MAX_AGE` 单条最长置顶时间(默认 12 小时);`ALERT_FEED` 为 NERV 源;`ALERT_REFRESH` 为轮询间隔(默认 60 秒,条件请求,变化即推送) |
 | 地震全屏保持时长 | `EARTHQUAKE_HOLD_SECONDS`（默认 90 秒） |
 | 全屏最小震度(默认值) | `EARTHQUAKE_MIN_SCALE`（默认 30=震度3；每台设备可在设置里改。10=1 40=4 45=5弱…） |
 | 汇率货币对 | `FX_BASE` / `FX_QUOTE`（币种代码,如 CNY/JPY）+ `FX_BASE_LABEL` / `FX_QUOTE_LABEL`（显示名,如 元/円） |
