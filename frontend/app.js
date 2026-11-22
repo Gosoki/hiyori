@@ -171,6 +171,8 @@ document.getElementById("city").onkeydown = (e) => {
 document.getElementById("settings-close").onclick = closeSettings;
 document.getElementById("quake-toggle").onclick = toggleQuakeLayout;
 document.getElementById("quake-close").onclick = closeQuake;
+document.getElementById("weather").onclick = openRadar;   // tap anywhere on the weather panel
+document.getElementById("radar-close").onclick = closeRadar;
 
 // ---- init ------------------------------------------------------------------
 async function init() {

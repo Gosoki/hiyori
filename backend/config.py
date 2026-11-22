@@ -119,7 +119,7 @@ EARTHQUAKE_STANDBY_POLL = 300
 # Keep the earthquake screen this long. Keep it ABOVE 60: a tablet whose WebSocket
 # is down learns about a quake from its 60-second poll of /api/earthquake/current,
 # which only returns events still inside this window.
-EARTHQUAKE_HOLD_SECONDS = 90
+EARTHQUAKE_HOLD_SECONDS = 120
 EARTHQUAKE_SHOW_TEST = False    # show EEW drill (訓練) messages as full-screen?
 EARTHQUAKE_RECENT_COUNT = 5     # how many recent quakes the 🗾 button lets you browse
 # Default full-screen 震度 threshold for a new device (each device can change it in
@@ -157,6 +157,21 @@ HOURLY_STEP = 2         # hours between points (2 → 12 points cover a full day
 
 # --- Weekly forecast --------------------------------------------------------
 WEEKLY_COUNT = 6    # days shown in the weekly strip (fixed; JMA gives 6–7 → capped)
+
+# --- Rain radar (気象庁 ナウキャスト + 降水短時間予報 tiles, 地理院 base map; free, no key)
+# The ☔ button loops the past hour of observed rain, then the forecast, around the
+# device's city. Tiles go through the backend (the page's CSP is 'self' only) and
+# are cached there; see backend/radar.py.
+RADAR_ZOOM = 8         # map zoom; 8 ≈ 0.5 km/px, ~600 km across a 1280-px screen (JMA serves 6–10)
+RADAR_PAST_MIN = 60    # minutes of observed rain before "now"
+RADAR_STEP_MIN = 30    # minutes between frames up to +1 h (multiple of 5; the nowcast is 5-minutely)
+RADAR_HOURS = 6        # forecast horizon (h); hourly frames after +1 h. JMA's 10-minute runs end at +6 h
+# While the earthquake screen is up, the 降水短時間予報 for the next N hours loops over
+# its map, one frame per hour at zoom RADAR_QUAKE_ZOOM — 6, the coarsest zoom JMA's
+# rain tiles carry data at (z≤5 is blank). Hours 7–12 are a 5-km numerical forecast
+# (JMA's hourly runs), coarser and less accurate than 1–6.
+RADAR_QUAKE_HOURS = 12
+RADAR_QUAKE_ZOOM = 6
 
 # --- Exchange rate (open.er-api.com, free, no key; ~daily rates) -------------
 # The bottom widget shows both directions with decimals: "1 元 = 23.802 円" and

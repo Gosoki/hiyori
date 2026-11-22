@@ -17,11 +17,12 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
 
 import websockets
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 import config
+import radar
 from anime import fetch_anime
 from earthquake import EarthquakeService, fetch_recent_quakes, quake_key
 from earthquake_jma import fetch_reports as fetch_jma_reports
@@ -58,9 +59,10 @@ class FeedHealth:
     last good data — so the age has to be judged here and surfaced as `stale`.
     """
 
-    def __init__(self, name, stale_after=None):
+    def __init__(self, name, stale_after=None, forget_after=None):
         self.name = name
         self.stale_after = stale_after
+        self.forget_after = forget_after   # on-demand feeds: an old failure nobody re-checked stops counting
         self.last_ok = 0.0
         self.last_error = ""
         self.last_error_ts = 0.0
@@ -84,9 +86,14 @@ class FeedHealth:
             log.warning("%s: upstream failed (%s)", self.name, self.last_error)
 
     def report(self):
-        age = round(time.time() - self.last_ok) if self.last_ok else None
+        now = time.time()
+        age = round(now - self.last_ok) if self.last_ok else None
+        # An on-demand feed is retried only when someone uses it, so a failure that
+        # nobody re-checked within forget_after is no longer evidence of an outage.
+        # The counters below still report what happened.
+        forgotten = bool(self.forget_after and self.fails and now - self.last_error_ts > self.forget_after)
         return {
-            "ok": self.fails == 0 and self.successes > 0,
+            "ok": (self.fails == 0 and self.successes > 0) or forgotten,
             "lastOkAge": age,
             "staleAfter": self.stale_after,
             # Only ever true for a feed that HAS succeeded before: a panel that never
@@ -131,9 +138,14 @@ class Feed:
 
     `empty_is_failure` is the one behavioural knob: an empty AI-news column is
     always a broken fetch, whereas an empty holiday list is a legitimate answer.
+
+    `on_demand` is for a feed nothing keeps warm (the radar is fetched only while
+    someone looks at it): it joins /api/health on its first fetch, since "never
+    asked for" is not an outage, is never flagged stale for sitting unused, and a
+    failure nobody re-checks within 10×ttl stops counting as degraded.
     """
 
-    def __init__(self, name, ttl, fetch, cold_value, empty_is_failure=False):
+    def __init__(self, name, ttl, fetch, cold_value, empty_is_failure=False, on_demand=False):
         self.name = name
         self.ttl = ttl
         self.fetch = fetch
@@ -142,7 +154,7 @@ class Feed:
         self.cache = {}      # key -> {"data": ..., "ts": ...}
         self.locks = {}      # key -> Lock, collapses concurrent misses into one fetch
         self.fail_ts = {}    # key -> when the last attempt failed
-        self.health = health(name, stale_after=3 * ttl)
+        self.health = FeedHealth(name, forget_after=10 * ttl) if on_demand else health(name, stale_after=3 * ttl)
 
     def _fresh(self, key):
         ent = self.cache.get(key)
@@ -164,6 +176,7 @@ class Feed:
                 return ent["data"]
             if time.time() - self.fail_ts.get(key, 0) < FAIL_COOLDOWN:
                 return self._last_good(key)
+            HEALTH.setdefault(self.name, self.health)
             try:
                 data = await self.fetch(*(args or (key,)))
             except Exception as e:
@@ -283,6 +296,10 @@ async def _fetch_ai(sid):
 weather_feed = Feed("weather", config.WEATHER_REFRESH, weather_fetch, {})
 hourly_feed = Feed("weather.hourly", config.HOURLY_REFRESH, hourly_fetch, [])
 ai_feed = Feed("news.ai", config.NEWS_REFRESH, _fetch_ai, [], empty_is_failure=True)
+# One entry for the whole country: the frame list does not depend on the city,
+# only the map centre the route adds does.
+radar_feed = Feed("radar", radar.FRAMES_TTL, lambda _key: radar.fetch_frames(),
+                  {"now": 0, "frames": []}, on_demand=True)
 
 
 async def city_weather(feed, cid):
@@ -569,6 +586,7 @@ async def lifespan(app):
     yield
     for t in tasks:
         t.cancel()
+    await radar.aclose()
 
 
 TAGS_METADATA = [
@@ -576,6 +594,7 @@ TAGS_METADATA = [
     {"name": "weather", "description": "気象庁 (JMA) today + weekly forecast and met.no hourly strip. Cached per city; keeps last-good on upstream failure."},
     {"name": "news", "description": "主要ニュース (Google News Top, with NERV severe alerts pinned) and the switchable AI・テック column."},
     {"name": "widgets", "description": "Bottom-bar widgets: 為替 (open.er-api), 新番 anime schedule (AniList, Jikan fallback), and 祝日 holidays (holidays-jp)."},
+    {"name": "radar", "description": "雨雲レーダー: 気象庁 nowcast / 降水短時間予報 frame list, and a caching proxy for the JMA rain tiles and the 地理院 base map (the page's CSP allows only 'self')."},
     {"name": "earthquake", "description": "P2P地震情報: the active/most-recent quakes over HTTP, plus live EEW/quake push over the `/ws` WebSocket."},
     {"name": "ops", "description": "Liveness of every upstream. Nothing on screen changes when a feed dies (each column keeps its last-good data), so this is the only place a silent outage is visible."},
 ]
@@ -593,7 +612,8 @@ app = FastAPI(
     description=(
         "Backend for **日和 Hiyori**, an always-on tablet information dashboard.\n\n"
         "Aggregates weather (JMA + met.no), news (Google News Top + NERV severe alerts), "
-        "AI/tech headlines, exchange rate, anime schedule, Japanese holidays, and live "
+        "AI/tech headlines, exchange rate, anime schedule, Japanese holidays, a rain radar "
+        "(JMA nowcast tiles over a 地理院 base map, proxied), and live "
         "earthquake / EEW alerts — **all from free, keyless sources**. Every column keeps "
         "its last-good data if an upstream fails, so the display never goes blank.\n\n"
         "* The tablet frontend (SPA) is served at `/`.\n"
@@ -626,8 +646,9 @@ async def security_and_cache_headers(request, call_next):
     response = await call_next(request)
     # Force the browser to revalidate on every load so frontend edits show up on a
     # normal refresh (StaticFiles still answers 304 when unchanged — cheap).
-    response.headers["Cache-Control"] = (
-        "public, max-age=86400" if request.url.path in LONG_CACHED else "no-cache"
+    # A route that sets its own policy keeps it (the radar's time-keyed tiles).
+    response.headers.setdefault(
+        "Cache-Control", "public, max-age=86400" if request.url.path in LONG_CACHED else "no-cache"
     )
     # index.html carries the content CSP in a <meta>; frame-ancestors is ignored
     # there by spec, so it has to be a real header. Enforced alongside the meta
@@ -731,6 +752,72 @@ async def api_anime():
 async def api_holiday():
     """Upcoming Japanese holidays as `[{date, name}]` (the countdown itself is computed client-side)."""
     return latest["holiday"] or []
+
+
+@app.get("/api/radar/frames", tags=["radar"], summary="Rain-radar animation frames")
+async def api_radar_frames(city: str = Query(None, description="City id from /api/cities; omitted → DEFAULT_CITY.")):
+    """`{zoom, lat, lon, now, frames}` for `city`'s map. `frames` run oldest → newest
+    as `{time (JST ISO), kind: obs|fcst, tile}`; append `/{z}/{x}/{y}.png` to `tile`.
+    `now` indexes the newest observation. Cached ~60 s, last-good on upstream
+    failure; `frames: []` when there has never been a good list, or when the only
+    one available is older than `radar.MAX_LIST_AGE`."""
+    c = find_city(city or config.DEFAULT_CITY)
+    data = await radar_feed.get("jma")
+    frames = data["frames"] if radar.is_current(data) else []   # stale last-good → tablet shows noDataError
+    return {"zoom": config.RADAR_ZOOM, "lat": c["lat"], "lon": c["lon"],
+            "now": data["now"] if frames else 0, "frames": frames}
+
+
+@app.get("/api/radar/quake", tags=["radar"], summary="Hourly rain outlook for the earthquake map")
+async def api_radar_quake():
+    """`{zoom, frames}` for the rain laid over the earthquake map: the 降水短時間予報
+    from the next hour to `RADAR_QUAKE_HOURS`, one frame per hour, oldest → newest,
+    as `{time (JST ISO), tile, coarse}`; append `/{zoom}/{x}/{y}.png` to `tile`.
+    `coarse` marks the hourly runs' 5-km numerical forecast (+7 h on). Shares the
+    `/api/radar/frames` cache; `frames: []` on failure or when only an old list is left."""
+    data = await radar_feed.get("jma")
+    frames = (data.get("quake") or []) if radar.is_current(data) else []
+    return {"zoom": config.RADAR_QUAKE_ZOOM, "frames": frames}
+
+
+# 1x1 transparent PNG (the tablet stretches it to the tile's size).
+_EMPTY_PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+              b"\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc`\x00\x02\x00\x00\x05\x00\x01z^\xab?\x00\x00"
+              b"\x00\x00IEND\xaeB`\x82")
+EMPTY_MAX_AGE = 600   # s; short, in case a 404 was a tile JMA had not published yet
+
+
+async def _tile_response(url, max_age, empty_on_404=False):
+    if not url:
+        return Response(status_code=404)          # invalid: never asked upstream
+    status, body = await radar.get_tile(url)
+    if status == 404 and empty_on_404:
+        return Response(_EMPTY_PNG, media_type="image/png",
+                        headers={"Cache-Control": f"public, max-age={EMPTY_MAX_AGE}"})
+    if status != 200:
+        return Response(status_code=status)
+    return Response(body, media_type="image/png",
+                    headers={"Cache-Control": f"public, max-age={max_age}"})
+
+
+@app.get("/api/radar/tile/{product}/{member}/{basetime}/{validtime}/{z}/{x}/{y}.png",
+         tags=["radar"], summary="Rain tile (proxied from JMA)")
+async def api_radar_tile(product: str, member: str, basetime: str, validtime: str, z: str, x: str, y: str):
+    """A JMA rain tile as listed in `/api/radar/frames` or `/api/radar/quake`. Only
+    `RADAR_ZOOM` / `RADAR_QUAKE_ZOOM` and tiles over Japan are served; anything else is a 404
+    without an upstream request. JMA does not publish 降水短時間予報 tiles that lie
+    wholly outside its forecast domain (far-offshore sea): its 404 for a valid tile
+    is "no rain here", answered with a transparent PNG so the tablet doesn't flag
+    the frame as failed. A real upstream failure stays a 502."""
+    return await _tile_response(radar.rain_tile_url(product, member, basetime, validtime, z, x, y),
+                                radar.RAIN_MAX_AGE, empty_on_404=True)
+
+
+@app.get("/api/radar/base/{z}/{x}/{y}.png", tags=["radar"], summary="Base-map tile (proxied from 地理院)")
+async def api_radar_base(z: str, x: str, y: str):
+    """A 地理院タイル 淡色地図 tile for the radar map: `RADAR_ZOOM` only (the earthquake
+    overlay uses no base tiles), same bounding-box rules as the rain tiles."""
+    return await _tile_response(radar.base_tile_url(z, x, y), radar.BASE_MAX_AGE)
 
 
 def current_event():

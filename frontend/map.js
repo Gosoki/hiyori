@@ -19,7 +19,17 @@
   let mainEpi = null, insetEpi = null;
   let projMain = null, projInset = null;
   let boxMain = null, boxInset = null;
+  let mainSvg = null, insetSvg = null;
   let ready = false, pending = null;
+  // Rain outlook laid over both maps (quake.js runs the loop): the frames asked
+  // for, and the one nested <svg class="rain"> per map holding a <g> per frame.
+  const TILE = 256, TILE_HAIR = 1 / TILE;   // neighbouring tiles overlap by one tile pixel: no seams
+  let rain = null, rainIdx = 0, rainRoots = [];
+  // Tiles load one frame at a time (loadRain): all frames at once would hold the
+  // browser's few connections to this host for as long as JMA is slow, and the
+  // quake screen's own requests would queue behind them.
+  let rainLoads = [];   // per frame, once asked: Promise settled when its tiles (both maps) have
+  let rainWaits = [];   // asked before the map was built: resolvers, run once it is
 
   async function init(containerId) {
     const container = document.getElementById(containerId);
@@ -59,13 +69,13 @@
 
     container.innerHTML = "";
 
-    const mainSvg = buildSvg(mainFeats, projMain, boxMain, "xMidYMid meet");
+    mainSvg = buildSvg(mainFeats, projMain, boxMain, "xMidYMid meet");
     mainSvg.classList.add("japan-svg", "japan-main");
     mainPaths = mainSvg._paths;
     mainEpi = mainSvg._epi;
     container.appendChild(mainSvg);
 
-    const insetSvg = buildSvg(insetFeats, projInset, boxInset, "xMidYMid meet");
+    insetSvg = buildSvg(insetFeats, projInset, boxInset, "xMidYMid meet");
     insetSvg.classList.add("japan-svg");
     insetPaths = insetSvg._paths;
     insetEpi = insetSvg._epi;
@@ -80,6 +90,7 @@
 
     ready = true;
     if (pending) { const p = pending; pending = null; paint(p.regions, p.hypo); }
+    if (rain) buildRain();
   }
 
   function bbox(feats) {
@@ -213,5 +224,136 @@
     epi.style.display = "";
   }
 
-  window.QuakeMap = { init, paint };
+  // ---- rain outlook ------------------------------------------------------
+  // The map is equirectangular (makeProject), JMA's rain tiles are Web-Mercator.
+  // Each tile is placed on its own: its corners' lon/lat (inverse Mercator for the
+  // top and bottom edges) go through this map's projection, and the image is
+  // stretched into that box. Within one z6 tile (~4–5° of latitude) the leftover
+  // curvature is a pixel or two on screen.
+  function tileLon(x, n) { return x / n * 360 - 180; }
+  function tileLat(y, n) { return Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI; }
+  function tileX(lon, n) { return Math.floor((lon + 180) / 360 * n); }
+  function tileY(lat, n) {
+    const r = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+  }
+
+  // [{x, y, w, h}] in this map's viewBox units for every zoom-z tile meeting its box.
+  function tilesFor(project, b, z) {
+    const n = Math.pow(2, z), out = [];
+    for (let ty = tileY(b.maxLat, n); ty <= tileY(b.minLat, n); ty++) {
+      for (let tx = tileX(b.minLon, n); tx <= tileX(b.maxLon, n); tx++) {
+        const [x0, y0] = project(tileLon(tx, n), tileLat(ty, n));
+        const [x1, y1] = project(tileLon(tx + 1, n), tileLat(ty + 1, n));
+        out.push({ tx, ty, x: x0, y: y0, w: (x1 - x0) * (1 + TILE_HAIR), h: (y1 - y0) * (1 + TILE_HAIR) });
+      }
+    }
+    return out;
+  }
+
+  function buildRain() {
+    removeRain();
+    [[mainSvg, projMain, boxMain], [insetSvg, projInset, boxInset]].forEach(([svg, project, b]) => {
+      const kx = Math.cos(((b.minLat + b.maxLat) / 2) * Math.PI / 180);
+      const W = ((b.maxLon - b.minLon) * kx).toFixed(3), H = (b.maxLat - b.minLat).toFixed(3);
+      // a nested <svg> the size of the viewBox clips the tiles to the map's own
+      // frame (the letterbox and the Okinawa inset's corner stay clean)
+      const root = document.createElementNS(NS, "svg");
+      root.setAttribute("class", "rain");
+      root.setAttribute("x", "0"); root.setAttribute("y", "0");
+      root.setAttribute("width", W); root.setAttribute("height", H);
+      root.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const tiles = tilesFor(project, b, rain.zoom);
+      rain.frames.forEach((f, i) => {
+        const g = document.createElementNS(NS, "g");
+        g.setAttribute("class", "rain-frame");
+        g.style.display = i === rainIdx ? "" : "none";
+        tiles.forEach((t) => {
+          const img = document.createElementNS(NS, "image");
+          img._src = `${f.tile}/${rain.zoom}/${t.tx}/${t.ty}.png`;   // set as href by loadRain
+          img.setAttribute("x", t.x.toFixed(4)); img.setAttribute("y", t.y.toFixed(4));
+          img.setAttribute("width", t.w.toFixed(4)); img.setAttribute("height", t.h.toFixed(4));
+          img.setAttribute("preserveAspectRatio", "none");
+          g.appendChild(img);
+        });
+        root.appendChild(g);
+      });
+      svg.insertBefore(root, svg._epi);   // above the 震度 fills, below the epicentre
+      rainRoots.push(root);
+      // JMA's light-rain colour is near-white: redraw the prefecture borders over
+      // the rain (unfilled, so the 震度 colours stay underneath), still under the epicentre
+      const ol = document.createElementNS(NS, "g");
+      ol.setAttribute("class", "rain-outline");
+      new Set(Object.values(svg._paths)).forEach((p) => {
+        const o = document.createElementNS(NS, "path");
+        o.setAttribute("d", p.getAttribute("d"));
+        ol.appendChild(o);
+      });
+      svg.insertBefore(ol, svg._epi);
+      rainRoots.push(ol);
+    });
+    rainWaits.forEach((done, i) => { if (done) frameLoad(i).then(done); });
+    rainWaits = [];
+  }
+
+  // rainRoots minus the outline groups: the per-map roots holding a <g> per frame
+  function rainFrameRoots() { return rainRoots.filter((r) => r.getAttribute("class") === "rain"); }
+
+  function removeRain() {
+    // dropping the href cancels a tile still queued; detaching alone leaves it loading
+    rainFrameRoots().forEach((r) => r.querySelectorAll("image").forEach((img) => img.removeAttribute("href")));
+    rainRoots.forEach((r) => { if (r.parentNode) r.parentNode.removeChild(r); });
+    rainRoots = [];
+  }
+
+  // Set frame i's hrefs on both maps; settles once every one of its images has
+  // fired load or error (a failed tile hides itself rather than show a broken image).
+  function frameLoad(i) {
+    const imgs = [];
+    rainFrameRoots().forEach((root) => { if (root.children[i]) imgs.push(...root.children[i].children); });
+    return new Promise((resolve) => {
+      let left = imgs.length;
+      if (!left) { resolve(); return; }
+      const done = () => { if (--left === 0) resolve(); };
+      imgs.forEach((img) => {
+        img.onload = done;
+        img.onerror = () => { img.style.visibility = "hidden"; done(); };
+        img.setAttribute("href", img._src);
+      });
+    });
+  }
+
+  // frames: [{tile, ...}] (each tile path + "/{z}/{x}/{y}.png" is one image).
+  // Replaces any rain already laid; before the map has loaded it waits for init().
+  // No tile is fetched until its frame is asked for with loadRain.
+  function setRain(frames, zoom) {
+    rain = { frames: frames.slice(), zoom };
+    rainIdx = 0;
+    rainLoads = [];
+    rainWaits = [];
+    if (ready) buildRain();
+  }
+
+  // Fetch frame i's tiles (once); the Promise settles when they have all loaded or failed.
+  function loadRain(i) {
+    if (!rain || !(i >= 0 && i < rain.frames.length)) return Promise.resolve();
+    if (!rainLoads[i]) rainLoads[i] = ready ? frameLoad(i) : new Promise((r) => { rainWaits[i] = r; });
+    return rainLoads[i];
+  }
+
+  // Show frame i only, on both maps.
+  function showRain(i) {
+    rainIdx = i;
+    rainFrameRoots().forEach((root) => [...root.children].forEach((g, k) => { g.style.display = k === i ? "" : "none"; }));
+  }
+
+  function clearRain() {
+    rain = null;
+    rainIdx = 0;
+    rainLoads = [];
+    rainWaits = [];
+    removeRain();
+  }
+
+  window.QuakeMap = { init, paint, setRain, loadRain, showRain, clearRain };
 })();

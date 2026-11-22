@@ -59,12 +59,23 @@ const API = {
   "/api/earthquake/recent": [],
   "/api/earthquake/current": {},
   "/api/health": { status: "ok", degraded: [], quake: { connected: true, fallbackActive: false } },
+  "/api/radar/frames": {
+    zoom: 8, lat: 35.69, lon: 139.69, now: 2,
+    frames: [
+      { time: "2026-11-22T20:40:00+09:00", kind: "obs", tile: "/api/radar/tile/nowc/none/20261122114000/20261122114000" },
+      { time: "2026-11-22T20:50:00+09:00", kind: "obs", tile: "/api/radar/tile/nowc/none/20261122115000/20261122115000" },
+      { time: "2026-11-22T21:00:00+09:00", kind: "obs", tile: "/api/radar/tile/nowc/none/20261122120000/20261122120000" },
+      { time: "2026-11-22T21:10:00+09:00", kind: "fcst", tile: "/api/radar/tile/nowc/none/20261122120000/20261122121000" },
+      { time: "2026-11-23T00:00:00+09:00", kind: "fcst", tile: "/api/radar/tile/rasrf/immed/20261122115000/20261122150000" },
+    ],
+  },
 };
 
 // `t` is node:test's context — used to close the window afterwards. app.js installs
 // several setInterval timers at boot, so a window left open keeps the whole test
 // process alive forever.
-function boot(t, { api = {} } = {}) {
+// `setup(w)` runs before any script, e.g. to break localStorage.
+function boot(t, { api = {}, setup } = {}) {
   const routes = { ...API, ...api };
   const html = fs.readFileSync(path.join(FE, "index.html"), "utf8");
   const dom = new JSDOM(html, { url: "http://test/", runScripts: "dangerously", pretendToBeVisual: true });
@@ -86,6 +97,7 @@ function boot(t, { api = {} } = {}) {
     close() { this.readyState = 3; }
   };
   w.ResizeObserver = class { observe() {} disconnect() {} };
+  if (setup) setup(w);
 
   // index.html's own order is the contract; read it rather than hard-coding a list
   const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
@@ -181,6 +193,7 @@ test("a quake takes over the screen and shows its detail", async (t) => {
   assert.equal(txt("quake-badge"), "5強");
   assert.equal(txt("q-epicenter"), "東京湾");
   assert.ok(!$("q-tsunami-row").classList.contains("hidden"));
+  assert.ok($("quake-overlay").classList.contains("is-live"), "a system-shown 地震情報 gets the caution-tape frame too");
 });
 
 test("dismissing a quake keeps its follow-up bulletins closed, but not a new quake", async (t) => {
@@ -386,7 +399,7 @@ test("a 警報 always shows, outranks a 予報, and a 予報 never covers it", a
   assert.ok(hidden());
   ev(`handleQuake(${JSON.stringify(eew({ id: "A", bulletin: "2", warn: true, maxScale: 40, maxIntensity: "4" }))})`);
   assert.ok(!hidden(), "a 警報 must show regardless of the threshold");
-  assert.ok($("quake-overlay").classList.contains("is-eew"), "no caution-tape frame");
+  assert.ok($("quake-overlay").classList.contains("is-live"), "no caution-tape frame");
   // another quake's 予報 must not cover the live 警報
   ev("minScale=30;");
   ev(`handleQuake(${JSON.stringify(eew({ id: "B", bulletin: "1予報", warn: false, maxScale: 40, maxIntensity: "4" }))})`);
@@ -394,7 +407,7 @@ test("a 警報 always shows, outranks a 予報, and a 予報 never covers it", a
   // a dismissed 予報 does not hold back its quake's 警報, even one of unknown intensity
   ev("hideQuake(); dismissedBase=null;");
   ev(`handleQuake(${JSON.stringify(eew({ id: "C", bulletin: "1予報", warn: false, maxScale: 40, maxIntensity: "4" }))})`);
-  assert.ok($("quake-overlay").classList.contains("is-eew"), "a 予報 also gets the frame");
+  assert.ok($("quake-overlay").classList.contains("is-live"), "a 予報 also gets the frame");
   ev("closeQuake()");
   ev(`handleQuake(${JSON.stringify(eew({ id: "C", bulletin: "2", warn: true, maxScale: -1, maxIntensity: "" }))})`);
   assert.ok(!hidden(), "the dismissed 予報 held back its 警報");
@@ -551,11 +564,468 @@ test("a backend blip does not clear a tsunami banner that is still in force", as
   assert.ok($("alert-banner").classList.contains("hidden"), "a real clear should hide the banner");
 });
 
+// --------------------------------------------------------------- rain radar
+const RADAR = API["/api/radar/frames"];
+// Tracks the radar's animation chain (setTimeout(radarStep)) and its auto-close:
+// which are still pending, and the delays they were armed with. Scripts resolve
+// setTimeout on the window at call time, so swapping it here is enough.
+function spyRadarTimers(w) {
+  const live = new Set(), delays = [], idle = [];
+  const st = w.setTimeout.bind(w), ct = w.clearTimeout.bind(w);
+  w.setTimeout = (fn, ms, ...a) => {
+    const name = fn && fn.name;
+    if (name !== "radarStep" && name !== "closeRadar") return st(fn, ms, ...a);
+    (name === "radarStep" ? delays : idle).push(ms);
+    const id = st(() => { live.delete(id); fn(); }, ms);
+    if (name === "radarStep") live.add(id);
+    return id;
+  };
+  w.clearTimeout = (id) => { live.delete(id); ct(id); };
+  return { live, delays, idle };
+}
+const radarRain = (w) => [...w.document.querySelectorAll("#radar-map .radar-rain")];
+const shownRain = (w) => radarRain(w).filter((l) => l.classList.contains("on"));
+
+test("tapping the weather panel opens the radar: base layer, one rain layer per frame, city at the centre", async (t) => {
+  const { w, $, txt, errs } = boot(t);
+  await settle();
+  const asked = [];
+  const orig = w.fetch;
+  w.fetch = (u, o) => { asked.push(String(u)); return orig(u, o); };
+  $("weather").click();
+  await settle();
+  assert.deepEqual(errs, []);
+  assert.ok(!$("radar-overlay").classList.contains("hidden"));
+  assert.ok(asked.includes("/api/radar/frames?city=tokyo"), asked.join(","));
+  const base = w.document.querySelectorAll("#radar-map .radar-base");
+  assert.equal(base.length, 1);
+  assert.equal(radarRain(w).length, RADAR.frames.length);
+  assert.deepEqual(shownRain(w), [radarRain(w)[0]], "only the first frame should be visible");
+  assert.equal(txt("radar-time"), "20:40");
+  assert.equal(txt("radar-kind"), "実況");
+  assert.ok($("radar-status").classList.contains("hidden"));
+  // every rain layer uses the same grid as the base, with its frame's tile path
+  const n = base[0].children.length;
+  assert.ok(n >= 12, `${n} tiles cannot cover a 1024x768 viewport`);
+  radarRain(w).forEach((l, i) => {
+    assert.equal(l.children.length, n);
+    assert.ok(l.firstChild.getAttribute("src").startsWith(RADAR.frames[i].tile + "/8/"));
+  });
+  // the tile holding Tokyo sits so that Tokyo lands on the viewport centre
+  const size = 256 * 2 ** 8;
+  const wx = (RADAR.lon + 180) / 360 * size;
+  const s = Math.sin(RADAR.lat * Math.PI / 180);
+  const wy = (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * size;
+  const tx = Math.floor(wx / 256), ty = Math.floor(wy / 256);
+  const img = [...base[0].children].find((i) => i.getAttribute("src") === `/api/radar/base/8/${tx}/${ty}.png`);
+  assert.ok(img, "the city's own tile is missing");
+  const px = (el, k) => parseFloat(el.style[k]);
+  const cx = px(base[0], "left") + px(img, "left") + (wx - tx * 256);
+  const cy = px(base[0], "top") + px(img, "top") + (wy - ty * 256);
+  assert.ok(Math.abs(cx - w.innerWidth / 2) <= 1 && Math.abs(cy - w.innerHeight / 2) <= 1, `city at ${cx},${cy}`);
+  assert.ok(w.document.querySelector("#radar-map .radar-marker"), "no city marker");
+});
+
+test("the radar loop plays every frame, holds the last one, then wraps", async (t) => {
+  const { w, ev, txt } = boot(t);
+  await settle();
+  const spy = spyRadarTimers(w);
+  ev("openRadar()");
+  await settle();
+  assert.deepEqual(spy.delays, [ev("RADAR_FRAME_MS")]);
+  const last = RADAR.frames.length - 1;
+  for (let i = 1; i <= last; i++) {
+    ev("radarStep()");
+    assert.deepEqual(shownRain(w), [radarRain(w)[i]], `frame ${i} not the only one shown`);
+  }
+  assert.equal(txt("radar-kind"), "予測");
+  assert.equal(txt("radar-time"), "00:00");
+  assert.equal(spy.delays.at(-1), ev("RADAR_HOLD_MS"), "the last frame was not held");
+  ev("radarStep()");
+  assert.deepEqual(shownRain(w), [radarRain(w)[0]], "did not wrap to the first frame");
+  assert.equal(txt("radar-kind"), "実況");
+  assert.equal(spy.delays.at(-1), ev("RADAR_FRAME_MS"));
+  assert.equal(spy.live.size, 1);
+  ev("closeRadar()");
+});
+
+test("reopening the radar never stacks animation timers or layers", async (t) => {
+  const { w, ev } = boot(t);
+  await settle();
+  const spy = spyRadarTimers(w);
+  ev("openRadar()");
+  await settle();
+  ev("closeRadar()");              // close
+  ev("openRadar()");               // and straight back open
+  ev("openRadar(); openRadar();"); // even a double open while one is loading
+  await settle();
+  assert.equal(spy.live.size, 1, `${spy.live.size} animation chains running`);
+  assert.equal(radarRain(w).length, RADAR.frames.length, "layers stacked");
+  assert.equal(w.document.querySelectorAll("#radar-map .radar-base").length, 1);
+  ev("closeRadar()");
+});
+
+test("closing the radar stops the loop and frees every layer", async (t) => {
+  const { w, $, ev } = boot(t);
+  await settle();
+  const spy = spyRadarTimers(w);
+  $("weather").click();
+  await settle();
+  assert.deepEqual(spy.idle, [5 * 60 * 1000], "a wall tablet must return to the dashboard by itself");
+  $("radar-close").click();
+  assert.ok($("radar-overlay").classList.contains("hidden"));
+  assert.equal($("radar-map").children.length, 0, "tile layers left in the DOM");
+  assert.equal(spy.live.size, 0, "the animation kept running");
+  assert.equal(ev("radarTimer"), null);
+  assert.equal(ev("radarIdleTimer"), null);
+  // a response that lands after the close must not resurrect anything
+  $("weather").click();
+  ev("closeRadar()");
+  await settle();
+  assert.ok($("radar-overlay").classList.contains("hidden"));
+  assert.equal($("radar-map").children.length, 0, "a late response rebuilt the layers");
+  assert.equal(spy.live.size, 0);
+});
+
+test("the radar re-lays its tiles for a new viewport", async (t) => {
+  const { w, ev } = boot(t);
+  await settle();
+  ev("openRadar()");
+  await settle();
+  ev("radarStep(); radarStep();");
+  const before = w.document.querySelector("#radar-map .radar-base").children.length;
+  Object.defineProperty(w, "innerWidth", { value: 400, configurable: true });
+  Object.defineProperty(w, "innerHeight", { value: 1200, configurable: true });
+  w.dispatchEvent(new w.Event("resize"));
+  await settle();
+  const base = w.document.querySelectorAll("#radar-map .radar-base");
+  assert.equal(base.length, 1);
+  assert.notEqual(base[0].children.length, before, "the grid was not rebuilt");
+  assert.equal(radarRain(w).length, RADAR.frames.length);
+  assert.deepEqual(shownRain(w), [radarRain(w)[2]], "the rebuild lost the current frame");
+  ev("closeRadar()");
+});
+
+test("no radar frames (or no response) shows a message, not a blank screen", async (t) => {
+  for (const body of [{ ...RADAR, frames: [] }, undefined, { ...RADAR, frames: [{ time: "x", kind: "obs", tile: "//evil/x" }] }]) {
+    const { w, $, txt, ev } = boot(t, { api: { "/api/radar/frames": body } });
+    await settle();
+    const spy = spyRadarTimers(w);
+    ev("openRadar()");
+    await settle();
+    assert.ok(!$("radar-overlay").classList.contains("hidden"));
+    assert.equal(txt("radar-status"), ev('t("noDataError")'));
+    assert.ok(!$("radar-status").classList.contains("hidden"));
+    assert.ok($("radar-play").classList.contains("hidden"));
+    assert.equal($("radar-map").children.length, 0);
+    assert.equal(w.document.querySelectorAll("#radar-map img").length, 0);
+    assert.equal(spy.live.size, 0);
+    ev("closeRadar()");
+  }
+});
+
+test("a rain frame with a failed tile is labelled, not shown as a dry sky; one retry can heal it", async (t) => {
+  const { w, $, ev, txt } = boot(t);
+  await settle();
+  const retries = [];
+  const st = w.setTimeout.bind(w);
+  w.setTimeout = (fn, ms, ...a) => (ms === ev("RADAR_RETRY_MS") ? (retries.push(fn), 0) : st(fn, ms, ...a));
+  ev("openRadar()");
+  await settle();
+  const fail = (img) => img.dispatchEvent(new w.Event("error"));
+  const bad = radarRain(w)[1].children[3];
+  fail(bad);
+  assert.equal(txt("radar-kind"), "実況", "frame 0 loaded fine and must keep its label");
+  ev("radarStep()");
+  assert.equal(txt("radar-kind"), ev('t("noDataError")'));
+  assert.ok($("radar-kind").classList.contains("err"));
+  assert.equal(bad.style.visibility, "hidden", "no broken-image icon");
+  ev("radarStep()");
+  assert.equal(txt("radar-kind"), "実況");
+  assert.ok(!$("radar-kind").classList.contains("err"));
+  // a tile failing while its frame is on screen relabels it at once
+  fail(radarRain(w)[2].children[0]);
+  assert.equal(txt("radar-kind"), ev('t("noDataError")'));
+  // exactly one delayed retry per tile, and a success puts the tile back
+  fail(bad);
+  assert.equal(retries.length, 2, "one retry per failed tile, never a loop");
+  ev("radarStep(); radarStep(); radarStep(); radarStep();");             // back to frame 1
+  bad.dispatchEvent(new w.Event("load"));
+  assert.equal(bad.style.visibility, "");
+  assert.equal(txt("radar-kind"), "実況");
+  ev("closeRadar()");
+  retries.forEach((fn) => fn());                                         // late retries on removed tiles
+  assert.equal($("radar-map").children.length, 0);
+});
+
+test("a radar list whose newest observation is old is marked stale", async (t) => {
+  const at = (min) => new Date(Date.now() + min * 60000).toISOString();
+  const body = (ago) => ({ ...RADAR, frames: RADAR.frames.map((f, i) => ({ ...f, time: at(-ago + (i - RADAR.now) * 10) })) });
+  for (const [ago, stale] of [[5, false], [45, true]]) {
+    const { $, ev } = boot(t, { api: { "/api/radar/frames": body(ago) } });
+    await settle();
+    ev("openRadar()");
+    await settle();
+    assert.equal(!$("radar-stale").classList.contains("hidden"), stale, `${ago} min old`);
+    assert.ok(!$("radar-play").classList.contains("hidden"), "old frames still play");
+    ev("closeRadar()");
+    assert.ok($("radar-stale").classList.contains("hidden"), "the mark outlived the overlay");
+  }
+});
+
+test("the radar sits below the quake overlay, no ☔ button, radar.js before app.js", async (t) => {
+  const { $ } = boot(t);
+  await settle();
+  const css = fs.readFileSync(path.join(FE, "style.css"), "utf8");
+  const z = (sel) => Number((css.match(new RegExp(sel.replace(/[#.]/g, "\\$&") + "\\s*\\{[^}]*z-index:\\s*(\\d+)")) || [])[1]);
+  assert.ok(z("#radar-overlay") < z("#quake-overlay"), `radar z=${z("#radar-overlay")} must be below quake z=${z("#quake-overlay")}`);
+  assert.equal($("radar-toggle"), null);
+  const html = fs.readFileSync(path.join(FE, "index.html"), "utf8");
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  assert.equal(scripts.at(-1), "app.js");
+  assert.ok(scripts.indexOf("radar.js") >= 0 && scripts.indexOf("radar.js") < scripts.indexOf("app.js"));
+});
+
+// The 地域/全国 switch is gone: the radar is the city view only, in every language,
+// whatever an older build left in localStorage.
+test("the radar has no view toggle and always shows the city at RADAR_ZOOM", async (t) => {
+  const { w, ev, errs } = boot(t, { setup: (w2) => w2.localStorage.setItem("radarView", "national") });
+  await settle();
+  ev("openRadar()");
+  await settle();
+  assert.equal(w.document.getElementById("radar-view"), null);
+  assert.equal(w.document.querySelectorAll("#radar-overlay button").length, 1, "only ✕ is left");
+  assert.equal(ev("typeof toggleRadarView"), "undefined");
+  const imgs = [...w.document.querySelectorAll("#radar-map img")].map((i) => i.getAttribute("src"));
+  assert.ok(imgs.length && imgs.every((s) => /\/8\/\d+\/\d+\.png$/.test(s)), "city view must be z8 only");
+  const text = (l) => { ev(`lang="${l}"; applyI18n();`); return w.document.getElementById("radar-overlay").textContent; };
+  for (const l of ["ja", "zh", "en"]) assert.doesNotMatch(text(l), /全国|地域|本地|Japan|Local/, l);
+  const i18n = fs.readFileSync(path.join(FE, "i18n.js"), "utf8");
+  assert.doesNotMatch(i18n, /radarNational|radarLocal/);
+  assert.deepEqual(errs, []);
+  ev("closeRadar()");
+});
+
+// ------------------------------------------------- rain over the quake map
+// The real QuakeMap is stubbed out in boot(); this one records what quake.js asks
+// of it, in order, alongside the fetches.
+function rainMap(w) {
+  const log = [];
+  w.__rainLog = log;
+  w.eval(`window.QuakeMap = {
+    init: function () {},
+    paint: function () { window.__rainLog.push("paint"); },
+    setRain: function (f, z) { window.__rainLog.push(["setRain", f.length, z]); },
+    loadRain: function (i) { window.__rainLog.push(["loadRain", i]); return (window.__rainLoad || Promise.resolve.bind(Promise))(i); },
+    showRain: function (i) { window.__rainLog.push(["showRain", i]); },
+    clearRain: function () { window.__rainLog.push("clearRain"); },
+  };`);
+  const orig = w.fetch;
+  w.fetch = (u, o) => { if (String(u).startsWith("/api/radar/quake")) log.push("fetch"); return orig(u, o); };
+  return {
+    log,
+    count: (name) => log.filter((e) => e === name || (Array.isArray(e) && e[0] === name)).length,
+    shown: () => log.filter((e) => Array.isArray(e) && e[0] === "showRain").map((e) => e[1]),
+    loads: () => log.filter((e) => Array.isArray(e) && e[0] === "loadRain").map((e) => e[1]),
+  };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));   // lets a step's tile wait resolve
+function spyQuakeRainTimers(w) {
+  const live = new Set(), delays = [];
+  const st = w.setTimeout.bind(w), ct = w.clearTimeout.bind(w);
+  w.setTimeout = (fn, ms, ...a) => {
+    if (!fn || fn.name !== "quakeRainStep") return st(fn, ms, ...a);
+    delays.push(ms);
+    const id = st(() => { live.delete(id); fn(); }, ms);
+    live.add(id);
+    return id;
+  };
+  w.clearTimeout = (id) => { live.delete(id); ct(id); };
+  return { live, delays };
+}
+// times relative to the real clock, so the "+Nh" label is deterministic
+const outlook = (n = 3) => ({
+  zoom: 6,
+  frames: Array.from({ length: n }, (_, i) => ({
+    time: new Date(Date.now() + (i + 1) * 3600e3).toISOString(), coarse: i === n - 1,
+    tile: `/api/radar/tile/rasrf/${i === n - 1 ? "none" : "immed"}/20261122110000/2026112212${i}000`,
+  })),
+});
+
+test("a quake screen loops the rain outlook, asked for only after the quake is painted", async (t) => {
+  const OUT = outlook();
+  const { w, ev, $, txt, errs } = boot(t, { api: { "/api/radar/quake": OUT } });
+  await settle();
+  const map = rainMap(w);
+  const spy = spyQuakeRainTimers(w);
+  ev(`handleQuake(${JSON.stringify(quake())})`);
+  assert.equal(map.log[0], "paint", "the quake must be painted before the rain is even asked for");
+  await settle();
+  assert.deepEqual(errs, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(map.log.slice(0, 6))),   // entries come from the page's realm
+                   ["paint", "fetch", ["setRain", 3, 6], ["loadRain", 0], ["showRain", 0], ["loadRain", 1]]);
+  assert.ok(!$("quake-rain").classList.contains("hidden"));
+  assert.equal(txt("quake-rain"), `雨 +1h ${ev(`radarClock(${JSON.stringify(OUT.frames[0].time)})`)}`);
+  assert.deepEqual(spy.delays, [ev("QUAKE_RAIN_FRAME_MS")]);
+  assert.equal(ev("QUAKE_RAIN_FRAME_MS"), 800);
+  ev("quakeRainStep()");
+  await tick();
+  ev("quakeRainStep()");
+  await tick();
+  assert.deepEqual(map.shown(), [0, 1, 2]);
+  assert.match(txt("quake-rain"), /^雨 \+3h \d\d:\d\d$/, "a coarse frame reads like any other");
+  assert.equal($("quake-rain").children.length, 0, "no coarse mark element");
+  assert.equal(spy.delays.at(-1), ev("QUAKE_RAIN_HOLD_MS"), "the last frame was not held");
+  assert.equal(ev("QUAKE_RAIN_HOLD_MS"), 2000);
+  ev("quakeRainStep()");
+  await tick();
+  assert.deepEqual(map.shown().at(-1), 0, "did not wrap to the first frame");
+  assert.equal(spy.live.size, 1);
+  ev("hideQuake()");
+});
+
+test("the rain label carries no coarse mark in any language", async (t) => {
+  const { w, ev, $, txt } = boot(t, { api: { "/api/radar/quake": outlook(1) } });   // its one frame is coarse
+  await settle();
+  rainMap(w);
+  for (const l of ["ja", "zh", "en"]) {
+    ev(`lang="${l}"; applyI18n();`);
+    ev(`handleQuake(${JSON.stringify(quake())})`);
+    await settle();
+    assert.match(txt("quake-rain"), /^\S+ \+1h \d\d:\d\d$/, l);
+    assert.doesNotMatch(txt("quake-rain"), /粗|coarse/i, l);
+    ev("hideQuake()");
+  }
+  for (const f of ["i18n.js", "quake.js", "style.css"])
+    assert.doesNotMatch(fs.readFileSync(path.join(FE, f), "utf8"), /quakeRainCoarse|\.coarse\b|f\.coarse/, f);
+});
+
+// The tablet has ~6 connections to this host: the loop asks one frame's tiles
+// at a time and never shows a frame before they are in.
+test("the rain loop waits for the next frame's tiles; a wait outliving the screen is dropped", async (t) => {
+  const { w, ev, $ } = boot(t, { api: { "/api/radar/quake": outlook(4) } });
+  await settle();
+  const map = rainMap(w);
+  const spy = spyQuakeRainTimers(w);
+  const gates = {};
+  w.__rainLoad = (i) => new w.Promise((r) => { gates[i] = r; });
+  ev(`handleQuake(${JSON.stringify(quake())})`);
+  await settle();
+  assert.deepEqual(map.loads(), [0], "more than the first frame asked for");
+  assert.deepEqual(map.shown(), [], "frame 0 shown before its tiles");
+  assert.equal(spy.live.size, 0);
+  gates[0]();
+  await tick();
+  assert.deepEqual(map.shown(), [0]);
+  assert.deepEqual(map.loads(), [0, 1], "the next frame is fetched while this one shows");
+  ev("quakeRainStep()");                  // the delay is up, frame 1's tiles are not
+  await tick();
+  assert.deepEqual(map.shown(), [0], "ran ahead of the tiles");
+  assert.equal(spy.live.size, 0);
+  gates[1]();
+  await tick();
+  assert.deepEqual(map.shown(), [0, 1]);
+  assert.deepEqual(map.loads(), [0, 1, 2]);
+  assert.equal(spy.live.size, 1);
+  ev("quakeRainStep()");
+  ev("hideQuake()");
+  gates[2]();                             // settles after the screen closed
+  await tick();
+  assert.deepEqual(map.shown(), [0, 1]);
+  assert.equal(spy.live.size, 0);
+  assert.ok($("quake-rain").classList.contains("hidden"));
+});
+
+test("hiding the quake screen stops the loop and drops the rain; showing it again never stacks", async (t) => {
+  const { w, ev, $ } = boot(t, { api: { "/api/radar/quake": outlook() } });
+  await settle();
+  const map = rainMap(w);
+  const spy = spyQuakeRainTimers(w);
+  ev(`handleQuake(${JSON.stringify(quake())})`);
+  await settle();
+  $("quake-close").click();
+  assert.ok($("quake-overlay").classList.contains("hidden"));
+  assert.equal(map.log.at(-1), "clearRain");
+  assert.equal(spy.live.size, 0, "the rain loop kept running");
+  assert.equal(ev("quakeRainTimer"), null);
+  assert.ok($("quake-rain").classList.contains("hidden"));
+  assert.equal($("quake-rain").textContent, "");
+  // new quakes, a follow-up bulletin and a second takeover while it is up
+  ev(`handleQuake(${JSON.stringify(quake({ id: "2", originTime: "2026/08/05 11:00:00" }))})`);
+  ev(`handleQuake(${JSON.stringify(quake({ id: "2", originTime: "2026/08/05 11:00:00", bulletin: "s" }))})`);
+  await settle();
+  ev(`handleQuake(${JSON.stringify(quake({ id: "3", originTime: "2026/08/05 12:00:00" }))})`);
+  await settle();
+  assert.equal(map.count("fetch"), 2, "one fetch per opening, reused while it stays open");
+  assert.equal(map.count("setRain"), 2);
+  assert.equal(spy.live.size, 1, `${spy.live.size} rain loops running`);
+  ev("hideQuake()");
+  assert.equal(spy.live.size, 0);
+});
+
+test("manual 🗾 browsing shows the rain too, and picking another quake keeps it", async (t) => {
+  const recent = [quake(), quake({ id: "9", originTime: "2026/08/04 09:00:00", maxIntensity: "3", maxScale: 30 })];
+  const { w, ev, $ } = boot(t, { api: { "/api/radar/quake": outlook(), "/api/earthquake/recent": recent } });
+  await settle();
+  const map = rainMap(w);
+  const spy = spyQuakeRainTimers(w);
+  $("quake-toggle").click();
+  await settle();
+  assert.equal(map.count("setRain"), 1);
+  assert.ok(!$("quake-overlay").classList.contains("is-live"), "manual browsing is not a takeover: no frame");
+  ev("selectRecent(1)");
+  ev("selectRecent(0)");
+  await settle();
+  assert.equal(map.count("fetch"), 1);
+  assert.equal(map.count("setRain"), 1);
+  assert.equal(map.count("clearRain"), 0);
+  assert.equal(spy.live.size, 1);
+  $("quake-toggle").click();          // 🗾 again closes it
+  assert.equal(spy.live.size, 0);
+  assert.equal(map.log.at(-1), "clearRain");
+});
+
+test("no rain (failure, empty, junk, or a throwing map) leaves the quake screen exactly as before", async (t) => {
+  const good = outlook();
+  const bodies = [undefined, { zoom: 6, frames: [] }, { frames: good.frames },
+                  { zoom: 6, frames: [{ time: "x", tile: "//evil/x" }, { tile: "/api/radar/tile/x" }] }, "throw"];
+  for (const body of bodies) {
+    const { w, ev, $, txt, errs } = boot(t, { api: { "/api/radar/quake": body === "throw" ? good : body } });
+    await settle();
+    const map = rainMap(w);
+    if (body === "throw") ev('QuakeMap.setRain = function () { throw new Error("boom"); };');
+    const spy = spyQuakeRainTimers(w);
+    ev(`handleQuake(${JSON.stringify(quake())})`);
+    await settle();
+    assert.deepEqual(errs, [], JSON.stringify(body));
+    assert.ok(!$("quake-overlay").classList.contains("hidden"));
+    assert.equal(txt("quake-badge"), "5強");
+    assert.equal(txt("q-epicenter"), "東京湾");
+    assert.ok($("quake-rain").classList.contains("hidden"));
+    assert.equal(map.count("setRain"), 0);
+    assert.equal(spy.live.size, 0);
+    ev("hideQuake()");
+  }
+});
+
+test("a rain response that lands after the quake screen closed is dropped", async (t) => {
+  const { w, ev, $ } = boot(t, { api: { "/api/radar/quake": outlook() } });
+  await settle();
+  const map = rainMap(w);
+  const spy = spyQuakeRainTimers(w);
+  ev(`handleQuake(${JSON.stringify(quake())})`);
+  ev("closeQuake()");
+  await settle();
+  assert.equal(map.count("setRain"), 0);
+  assert.ok($("quake-rain").classList.contains("hidden"));
+  assert.equal(spy.live.size, 0);
+});
+
 // -------------------------------------------------------------------- i18n
 test("every data-i18n label is translated in all three languages", async (t) => {
   const { w, ev } = boot(t);
   await settle();
-  const KEYS = /^(newsAI|newsJapan|fxTitle|comingSoon|holidayTitle|animeTitle|thresholdLabel|maxIntensity|epicenter|magnitude|depth|origin|tsunami|settings|language|cityLabel|aiSourceLabel|close|noData)$/;
+  const KEYS = /^(newsAI|newsJapan|fxTitle|comingSoon|holidayTitle|animeTitle|thresholdLabel|maxIntensity|epicenter|magnitude|depth|origin|tsunami|settings|language|cityLabel|aiSourceLabel|close|noData|radarTitle)$/;
   for (const lang of ["ja", "zh", "en"]) {
     ev(`lang="${lang}"; applyI18n();`);
     const raw = [...w.document.querySelectorAll("[data-i18n]")]

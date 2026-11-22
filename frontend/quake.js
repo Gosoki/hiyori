@@ -127,7 +127,9 @@ function showQuakeLayout(ev) {
   overlay.classList.remove("hidden");
   alignQuakeClose();
   overlay.classList.toggle("is-eew", !!ev && ev.kind === "eew");
+  overlay.classList.toggle("is-live", !!ev);   // system takeover (not a 🗾 browse): caution-tape frame
   document.getElementById("quake-toggle").classList.add("active");
+  startQuakeRain();
 }
 
 // Idle timer for a manually-opened overlay: return to the dashboard if untouched,
@@ -195,13 +197,14 @@ function selectRecent(i) {
   renderQuake(ev);
   overlay.classList.remove("hidden");
   alignQuakeClose();
-  overlay.classList.remove("is-eew");
+  overlay.classList.remove("is-eew", "is-live");
   document.getElementById("quake-toggle").classList.add("active");
   document.querySelectorAll("#quake-recent .rq-item").forEach((el, k) =>
     el.classList.toggle("active", k === i));
   document.getElementById("quake-remaining").textContent =
     `${t("recentQuake")} · ${formatOrigin(ev.originTime)}`;
   armManualIdle();   // each interaction resets the auto-close countdown
+  startQuakeRain();
 }
 
 // Close the earthquake screen (✕ or 🗾). Dismissing a live event keeps it closed
@@ -308,12 +311,101 @@ function hideQuake() {
   clearInterval(quakeTickTimer);
   clearTimeout(quakeIdleTimer);
   overlay.classList.add("hidden");
-  overlay.classList.remove("is-eew");
+  overlay.classList.remove("is-eew", "is-live");
   document.getElementById("quake-recent").classList.add("hidden");
   document.getElementById("quake-toggle").classList.remove("active");
   currentQuakeKey = null;
   manualMode = false;
   shownEvent = null;
+  stopQuakeRain();
+}
+
+// ---- rain outlook over the quake map ---------------------------------------
+// While the overlay is up, the next hours of 降水短時間予報 loop over the map in
+// JMA's own colours (/api/radar/quake; QuakeMap lays the tiles). Optional by
+// design: it is asked for only after the quake is painted, a failure leaves the
+// screen as it was, and one fetch serves the whole time the overlay stays open —
+// switching quakes or list entries keeps the layers and the one timer chain.
+// Tiles load one frame ahead of the loop (QuakeMap.loadRain), never all at once:
+// the loop waits for a slow frame rather than flood the connections the quake
+// screen's own requests need.
+const QUAKE_RAIN_FRAME_MS = 800;   // per frame
+const QUAKE_RAIN_HOLD_MS = 2000;   // the last frame stays this long before the loop restarts
+let quakeRainFrames = [], quakeRainIdx = 0, quakeRainTimer = null;
+let quakeRainAsked = false;        // a fetch is out or its frames are laid, for this opening
+let quakeRainSeq = 0;              // bumped by every stop: a late response for a closed overlay is dropped
+let quakeRainNext = null;          // the next frame's tile load (QuakeMap.loadRain)
+
+async function startQuakeRain() {
+  if (quakeRainAsked || !window.QuakeMap || !window.QuakeMap.setRain || !window.QuakeMap.loadRain) return;
+  quakeRainAsked = true;
+  const seq = quakeRainSeq;
+  const d = await getJson("/api/radar/quake", null);
+  if (seq !== quakeRainSeq || overlay.classList.contains("hidden")) return;
+  // only our own tile proxy ever becomes an image href
+  const frames = d && Array.isArray(d.frames) && Number.isInteger(d.zoom)
+    ? d.frames.filter((f) => f && typeof f.time === "string" && typeof f.tile === "string"
+                             && f.tile.startsWith("/api/radar/tile/")) : [];
+  if (!frames.length) return;
+  try {
+    window.QuakeMap.setRain(frames, d.zoom);
+  } catch (_) {
+    stopQuakeRain();
+    return;
+  }
+  quakeRainFrames = frames;
+  await window.QuakeMap.loadRain(0);
+  if (seq !== quakeRainSeq) return;
+  showQuakeRainFrame(0);
+  scheduleQuakeRainStep();
+}
+
+function showQuakeRainFrame(i) {
+  quakeRainIdx = i;
+  window.QuakeMap.showRain(i);
+  const f = quakeRainFrames[i];
+  // rounded up: the 10-minute run is a little older than "now", and rounding to
+  // nearest would label its last frame and the hourly run's first one alike
+  const ahead = Math.max(1, Math.ceil((Date.parse(f.time) - Date.now()) / 3600000));
+  const el = document.getElementById("quake-rain");
+  el.textContent = `${t("quakeRain")} +${ahead}h ${radarClock(f.time)}`;   // radarClock: radar.js
+  el.classList.remove("hidden");
+}
+
+// The one timer chain: every start/stop/step clears it before re-arming. The
+// next frame's tiles start loading now; the step shows it once the delay is up
+// AND they have loaded (or failed).
+function scheduleQuakeRainStep() {
+  clearTimeout(quakeRainTimer);
+  const last = quakeRainFrames.length - 1;
+  quakeRainNext = last > 0 ? window.QuakeMap.loadRain((quakeRainIdx + 1) % quakeRainFrames.length) : null;
+  quakeRainTimer = last > 0
+    ? setTimeout(quakeRainStep, quakeRainIdx === last ? QUAKE_RAIN_HOLD_MS : QUAKE_RAIN_FRAME_MS) : null;
+}
+function quakeRainStep() {
+  const seq = quakeRainSeq, next = (quakeRainIdx + 1) % quakeRainFrames.length;
+  clearTimeout(quakeRainTimer);
+  quakeRainTimer = null;
+  Promise.resolve(quakeRainNext).then(() => {
+    if (seq !== quakeRainSeq || quakeRainTimer !== null) return;   // stopped, or another step got there first
+    showQuakeRainFrame(next);
+    scheduleQuakeRainStep();
+  });
+}
+
+// Stop the loop and drop every rain layer: a hidden overlay holds no timer and no tiles.
+function stopQuakeRain() {
+  quakeRainSeq++;
+  clearTimeout(quakeRainTimer);
+  quakeRainTimer = null;
+  quakeRainFrames = [];
+  quakeRainIdx = 0;
+  quakeRainNext = null;
+  quakeRainAsked = false;
+  const el = document.getElementById("quake-rain");
+  el.textContent = "";
+  el.classList.add("hidden");
+  if (window.QuakeMap && window.QuakeMap.clearRain) window.QuakeMap.clearRain();
 }
 
 // Seed / refresh the recent-quakes list so 🗾 always has something to browse.

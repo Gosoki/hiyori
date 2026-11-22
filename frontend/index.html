@@ -28,7 +28,7 @@
     </header>
 
     <!-- Weather -->
-    <section id="weather" class="panel">
+    <section id="weather" class="panel" title="Rain radar">
       <div class="weather-body">
         <div id="today" class="today"><div class="loading" data-i18n="noData">データ取得中…</div></div>
         <div class="weather-right">
@@ -69,6 +69,24 @@
     </section>
   </div>
 
+  <!-- Rain radar overlay: tile layers (filled by radar.js) + floating info box (top-left) -->
+  <div id="radar-overlay" class="hidden">
+    <div id="radar-map" class="radar-map"></div>
+    <div class="radar-info">
+      <div class="radar-title" data-i18n="radarTitle">雨雲レーダー</div>
+      <div id="radar-stale" class="radar-stale hidden" data-i18n="stale">更新停止</div>
+      <div id="radar-play" class="radar-play hidden">
+        <div class="radar-frame">
+          <span id="radar-time" class="radar-time">--:--</span>
+          <span id="radar-kind" class="radar-kind"></span>
+        </div>
+        <div class="radar-progress"><div id="radar-fill" class="radar-fill"></div><div id="radar-now" class="radar-now"></div></div>
+      </div>
+    </div>
+    <div id="radar-status" class="radar-status hidden"></div>
+    <button id="radar-close" class="quake-close" aria-label="close">✕</button>
+  </div>
+
   <!-- Earthquake overlay: fullscreen map + floating info panel (top-left) -->
   <div id="quake-overlay" class="hidden">
     <div id="quake-map" class="quake-map"></div>
@@ -96,6 +114,7 @@
     </div>
 
     <div id="quake-recent" class="quake-recent hidden"></div>
+    <div id="quake-rain" class="quake-rain hidden"></div>
     <button id="quake-close" class="quake-close" aria-label="close">✕</button>
   </div>
 
@@ -128,6 +147,7 @@
   <script src="news.js"></script>
   <script src="widgets.js"></script>
   <script src="quake.js"></script>
+  <script src="radar.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

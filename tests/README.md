@@ -42,6 +42,7 @@ python3 -m pytest -m live
 | `test_weather.py` | JMA 两套区域编码不能混用；当天气温 memo；`max([])` 崩溃回归 |
 | `test_feed.py` | 缓存"永不抛、永不空"契约；冷却；并发合并；健康只在状态**变化**时打日志 |
 | `test_api.py` | 全部接口 + 安全响应头 + 路径穿越 + WebSocket 二进制帧 + **并发扇出延迟** |
+| `test_radar.py` | 雨云雷达选帧(未完成的最新一轮、`immed`/`none` 成员、步长、JST、顺序)、瓦片路由校验(非法参数、雷达与地震叠雨两个缩放级别以外的不回源)、按字节 LRU、并发合并、404/502 |
 | `test_news.py` / `test_anime.py` | 标题/媒体名切分、NERV 严重度过滤、24h+ 记法与排序 |
 | `frontend/frontend.test.mjs` | 渲染、XSS 零逃逸、**地震占屏规则**（阈值 / 未知震度 / 取消作用域）、i18n |
 | `frontend/map.test.mjs` | EEW 无后缀地名、北海道四分区合并、冲绳小图路由与越界钳制 |

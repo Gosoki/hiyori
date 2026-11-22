@@ -107,6 +107,7 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
 }
 #quake-toggle:hover { color: var(--text); }
 #quake-toggle.active { color: var(--accent); }
+#weather { cursor: pointer; }   /* the whole panel opens the rain radar */
 /* Live quake feed degraded: a dot on the 🗾 button, since every other symptom of a
    dead upstream is invisible (the dashboard just keeps showing its last-good data).
    Amber = running on the JMA polling fallback (地震情報 only, no EEW); red = no
@@ -129,7 +130,7 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
   min-height: 0;
 }
 .panel-title {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-dim);
   margin-bottom: var(--gap);
@@ -245,7 +246,7 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
   display: flex;
   gap: clamp(5px, 0.9vmin, 14px);
   align-items: baseline;
-  padding: clamp(4px, 0.95vmin, 14px) 0;
+  padding: clamp(3px, 0.7vmin, 11px) 0;
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
   line-height: 1.3;
@@ -407,9 +408,9 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
 .quake-banner { position: relative; }
 .quake-banner::after { content: ""; position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 #quake-overlay.is-eew .quake-banner::after { animation: pulse-wash 1s ease-in-out infinite; }
-/* EEW (警報・予報): a thin caution-tape frame. A pseudo-element, so it takes no
+/* Every system takeover (EEW 警報・予報 and 地震情報, not a 🗾 browse): a thin caution-tape frame. A pseudo-element, so it takes no
    layout space; border-image with slice = border width shows the stripes 1:1. */
-#quake-overlay.is-eew::after {
+#quake-overlay.is-live::after {
   content: ""; position: absolute; inset: 0; z-index: 50; pointer-events: none;
   border: 8px solid #f5c400;
   border-image: repeating-linear-gradient(-45deg, #f5c400 0 12px, #111 12px 24px) 8;
@@ -516,9 +517,94 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
 .japan-svg .pref.i5w { fill: var(--i5w); } .japan-svg .pref.i5s { fill: var(--i5s); }
 .japan-svg .pref.i6w { fill: var(--i6w); } .japan-svg .pref.i6s { fill: var(--i6s); }
 .japan-svg .pref.i7 { fill: var(--i7); }
+/* rain outlook (JMA colours) between the fills and the epicentre */
+.japan-svg .rain { opacity: 0.5; pointer-events: none; }
+/* prefecture borders redrawn over the rain (JMA's drizzle colour is near-white) */
+.japan-svg .rain-outline path { fill: none; stroke: #101010; stroke-width: 0.04; pointer-events: none; }
+/* bottom centre, between the Okinawa inset and the 地震情報 panel (portrait: top, below) */
+.quake-rain {
+  position: absolute;
+  bottom: var(--eq-bottom);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: clamp(3px, 0.5vmin, 6px) clamp(8px, 1.2vmin, 14px);
+  border-radius: calc(var(--radius) * 0.6);
+  background: rgba(26, 26, 26, 0.8);
+  color: var(--text); font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+  white-space: nowrap; pointer-events: none;
+}
 .epi-ring { fill: none; stroke: #ff4d4d; transform-box: fill-box; transform-origin: center; animation: epi-pulse 1.5s ease-out infinite; will-change: transform, opacity; }
 .epi-x { stroke: #ff4d4d; stroke-linecap: round; }
 @keyframes epi-pulse { 0% { transform: scale(0.4); opacity: 1; } 100% { transform: scale(2.4); opacity: 0; } }
+
+/* ============================ Rain radar overlay ============================ */
+/* BELOW the earthquake overlay (1000), like Settings: an open radar must never cover
+   an EEW. top/right/bottom/left spelled out — older WebViews lack `inset`. */
+#radar-overlay {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 900;
+  background: #141414;
+  overflow: hidden;
+  animation: quake-in 0.2s ease-out;
+}
+/* tiles are scenery: no long-press "save image" menu, no drag ghost */
+.radar-map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.radar-layer { position: absolute; }
+/* 257 px on a 256 px pitch: a 1-px overlap, so a fractional device-pixel ratio
+   can't anti-alias a dark seam between neighbouring tiles */
+.radar-layer img { position: absolute; width: 257px; height: 257px; max-width: none; }
+/* 淡色地図 turned dark: one filter on the layer, not one per tile */
+.radar-base { filter: invert(1) hue-rotate(180deg) brightness(0.75) contrast(0.9); }
+/* every frame stays laid out (decoded, ready); only the current one is shown */
+.radar-rain { opacity: 0.85; visibility: hidden; }
+.radar-rain.on { visibility: visible; }
+.radar-marker {
+  position: absolute;   /* left/top: the city, set by radar.js */
+  width: clamp(12px, 1.8vmin, 22px); height: clamp(12px, 1.8vmin, 22px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%; background: #fff;
+  border: 3px solid #141414; box-shadow: 0 0 0 2px #fff;
+}
+
+.radar-info {                      /* bottom-right, out of the way of ✕ (top-right) */
+  position: absolute;
+  bottom: clamp(10px, 2vmin, 28px);
+  right: clamp(10px, 2vmin, 28px);
+  min-width: clamp(170px, 24vmin, 320px);
+  padding: clamp(8px, 1.4vmin, 18px) clamp(12px, 1.8vmin, 24px);
+  display: flex; flex-direction: column; gap: clamp(4px, 0.8vmin, 10px);
+  background: rgba(26, 26, 26, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.radar-title { font-size: var(--fs-sm); font-weight: 700; color: var(--text-dim); }
+.radar-stale { font-size: var(--fs-sm); font-weight: 700; color: var(--i3); }
+.radar-play { display: flex; flex-direction: column; gap: clamp(6px, 1vmin, 12px); }
+.radar-frame { display: flex; align-items: center; gap: clamp(8px, 1.4vmin, 18px); }
+.radar-time { font-size: var(--fs-xl); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.radar-kind {
+  font-size: var(--fs-sm); font-weight: 700;
+  padding: 0.15em 0.7em; border-radius: 999px;
+  background: var(--accent); color: #0a0a0a;
+}
+.radar-kind.fcst { background: var(--i3); }
+.radar-kind.err { background: var(--danger); color: #fff; }   /* some tiles of this frame failed */
+/* thin progress bar; the tick marks "now" (newest observed frame) */
+.radar-progress {
+  position: relative; height: clamp(4px, 0.6vmin, 7px);
+  border-radius: 999px; background: rgba(255, 255, 255, 0.16);
+}
+.radar-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: inherit; background: var(--text); }
+.radar-now {
+  position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px;
+  background: var(--accent);
+}
+.radar-status {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: var(--fs-md); color: var(--text-dim); text-align: center;
+}
 
 /* ============================ Settings ============================ */
 #settings-overlay {
@@ -586,6 +672,13 @@ body.night #dashboard > :not(#alert-banner) { filter: brightness(0.45); }
 
   /* earthquake: wider info panel (and matching recent list) on the narrow screen */
   #quake-overlay { --eq-w: clamp(260px, 56%, 700px); }
+  /* the bottom is the Okinawa inset + the 地震情報 panel: rain label goes top centre,
+     or right of the recent-quakes list while that list is up */
+  .quake-rain { top: var(--eq-left); bottom: auto; }
+  .quake-recent:not(.hidden) + .quake-rain {
+    left: calc(var(--eq-left) + var(--eq-w) + clamp(8px, 1.4vmin, 18px));
+    transform: none;
+  }
 }
 
 /* Narrow screens: single news column so headlines stay readable */
